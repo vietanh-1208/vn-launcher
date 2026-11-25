@@ -174,25 +174,27 @@ impl App {
         setup_fonts(&cc.egui_ctx);
         setup_theme(&cc.egui_ctx);
 
-        let mut config = LauncherConfig::load();
+        let config = {
+            let mut c = LauncherConfig::load();
+            if c.instances.iter().all(|i| i.id != c.selected_instance_id) {
+                c.selected_instance_id = c.instances.first().map(|i| i.id.clone()).unwrap_or_default();
+            }
+            if c.saved_servers.iter().all(|s| !s.address.eq_ignore_ascii_case("ngvsmp.asia:25616")) {
+                c.saved_servers.insert(
+                    0,
+                    ServerEntry {
+                        name: "NGV SMP".into(),
+                        address: "ngvsmp.asia:25616".into(),
+                    },
+                );
+                let _ = c.save();
+            }
+            c
+        };
         let mut accounts = AccountStore::load();
-        if accounts.accounts.is_empty() {
-            let name = if config.username.trim().is_empty() { "VNPlayer".to_string() } else { config.username.trim().to_string() };
-            accounts.upsert(Account::offline(&name), true);
+        if accounts.accounts.is_empty() && !config.username.trim().is_empty() {
+            accounts.upsert(Account::offline(config.username.trim()), true);
             let _ = accounts.save();
-        }
-        if config.instances.iter().all(|i| i.id != config.selected_instance_id) {
-            config.selected_instance_id = config.instances.first().map(|i| i.id.clone()).unwrap_or_default();
-        }
-        if config.saved_servers.iter().all(|s| !s.address.eq_ignore_ascii_case("ngvsmp.asia:25616")) {
-            config.saved_servers.insert(
-                0,
-                ServerEntry {
-                    name: "NGV SMP".into(),
-                    address: "ngvsmp.asia:25616".into(),
-                },
-            );
-            let _ = config.save();
         }
 
         let versions = Arc::new(Mutex::new(
