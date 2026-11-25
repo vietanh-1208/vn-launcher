@@ -1,11 +1,14 @@
 use crate::config::{InstanceConfig, LauncherConfig, ModLoader};
 use crate::fabric::ensure_fabric_loader;
 use crate::java::{ensure_java_runtime, recommended_java_major};
-use crate::modrinth::has_mod;
+use crate::modloader::ensure_forge_or_neoforge;
+use crate::modrinth::{has_mod, install_project, ContentKind};
 use crate::mojang::{build_http_client, ensure_vanilla_version};
-use crate::optimizer::{build_jvm_args, patch_bobby, patch_distant_horizons, prepare_game_dir};
+use crate::optimizer::{
+    apply_offline_skin, build_jvm_args, ensure_high_perf_gpu, patch_bobby, patch_distant_horizons, prepare_game_dir,
+};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
@@ -14,6 +17,7 @@ pub struct LaunchAccount {
     pub uuid: String,
     pub access_token: String,
     pub user_type: String,
+    pub offline_skin: String,
 }
 
 /// `--quickPlayMultiplayer` exists since 1.20; older versions use `--server/--port`.
@@ -50,9 +54,12 @@ pub fn prepare_and_launch(
         config.custom_java_path.clone()
     };
     let java_exe = ensure_java_runtime(&client, &config.runtimes_dir(), java_major, &java_override, status)?;
+    ensure_high_perf_gpu(&java_exe);
 
     let mut classpath: Vec<PathBuf> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    let mut extra_jvm_args: Vec<String> = Vec::new();
+    let mut extra_game_args: Vec<String> = Vec::new();
     let main_class = match instance.loader {
         ModLoader::Fabric => {
             let fabric = ensure_fabric_loader(
@@ -67,6 +74,27 @@ pub fn prepare_and_launch(
                 classpath.push(jar);
             }
             fabric.main_class
+        }
+        ModLoader::NeoForge | ModLoader::Forge => {
+            let spec = ensure_forge_or_neoforge(
+                &client,
+                &java_exe,
+                &shared_dir,
+                &instance.mc_version,
+                instance.loader,
+                status,
+            )?;
+            for (ga, jar) in spec.jars {
+                if !ga.is_empty() {
+                    seen.insert(ga);
+                }
+                if !classpath.contains(&jar) {
+                    classpath.push(jar);
+                }
+            }
+            extra_jvm_args = spec.extra_jvm_args;
+            extra_game_args = spec.extra_game_args;
+            spec.main_class
         }
         ModLoader::Vanilla => vanilla.version_info.main_class.clone(),
     };
@@ -87,9 +115,26 @@ pub fn prepare_and_launch(
         if has_mod(&game_dir, "distanthorizons") {
             patch_distant_horizons(&game_dir, instance.lod_render_distance);
         }
+        if !account.offline_skin.trim().is_empty() {
+            let skin_p = Path::new(account.offline_skin.trim());
+            if skin_p.exists() {
+                if !has_mod(&game_dir, "customskinloader") {
+                    let _ = install_project(
+                        &client,
+                        ContentKind::Mod,
+                        "customskinloader",
+                        &instance.mc_version,
+                        &game_dir,
+                        status,
+                    );
+                }
+                let _ = apply_offline_skin(&game_dir, &account.username, skin_p);
+            }
+        }
     }
 
     let mut args = build_jvm_args(instance, java_major, &vanilla.natives_dir);
+    args.extend(extra_jvm_args);
     args.push("-cp".into());
     args.push(
         classpath
@@ -119,6 +164,7 @@ pub fn prepare_and_launch(
         "--versionType".into(),
         "VN Launcher by Vanh".into(),
     ]);
+    args.extend(extra_game_args);
     if instance.fullscreen {
         args.push("--fullscreen".into());
     } else {
@@ -160,7 +206,8 @@ pub fn prepare_and_launch(
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW); // no black console window behind the game
+        const ABOVE_NORMAL_PRIORITY_CLASS: u32 = 0x0000_8000;
+        cmd.creation_flags(CREATE_NO_WINDOW | ABOVE_NORMAL_PRIORITY_CLASS); // no black console + smooth CPU priority
     }
     cmd.spawn()
         .map_err(|e| format!("Không chạy được Java ({}): {}", java_exe.display(), e))

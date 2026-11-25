@@ -7,6 +7,8 @@ use std::path::PathBuf;
 pub enum ModLoader {
     Vanilla,
     Fabric,
+    NeoForge,
+    Forge,
 }
 
 impl ModLoader {
@@ -14,6 +16,17 @@ impl ModLoader {
         match self {
             ModLoader::Vanilla => "Vanilla",
             ModLoader::Fabric => "Fabric",
+            ModLoader::NeoForge => "NeoForge",
+            ModLoader::Forge => "Forge",
+        }
+    }
+
+    pub fn modrinth_slug(&self) -> &'static str {
+        match self {
+            ModLoader::Fabric => "fabric",
+            ModLoader::NeoForge => "neoforge",
+            ModLoader::Forge => "forge",
+            ModLoader::Vanilla => "vanilla",
         }
     }
 }
@@ -159,7 +172,10 @@ impl Default for LauncherConfig {
             custom_java_path: String::new(),
             selected_instance_id: String::new(),
             instances: Vec::new(),
-            saved_servers: Vec::new(),
+            saved_servers: vec![ServerEntry {
+                name: "NGV SMP".into(),
+                address: "ngvsmp.asia:25616".into(),
+            }],
             minimize_on_play: false,
             show_snapshots: false,
             ms_client_id: String::new(),
@@ -354,7 +370,11 @@ pub fn total_ram_mb() -> u64 {
 /// Safe RAM for Minecraft: leaves enough memory for Windows so the game never swaps to disk
 pub fn recommended_ram_mb() -> u32 {
     let total = total_ram_mb();
-    if total <= 8_700 {
+    if total <= 4_600 {
+        1536
+    } else if total <= 6_600 {
+        2048
+    } else if total <= 8_700 {
         3072
     } else if total <= 12_700 {
         4096
@@ -367,5 +387,9 @@ pub fn recommended_ram_mb() -> u32 {
 
 pub fn max_ram_mb() -> u32 {
     let total = total_ram_mb() as u32;
-    total.saturating_sub(2048).max(2048)
+    if total <= 4_600 {
+        total.saturating_sub(1536).max(1536)
+    } else {
+        total.saturating_sub(2048).max(2048)
+    }
 }

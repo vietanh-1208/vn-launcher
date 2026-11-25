@@ -1,0 +1,102 @@
+[
+  {
+    "slug": "makeup-ultra-fast-shaders",
+    "name": "MakeUp - Ultra Fast",
+    "desc": "Shader siêu nhẹ FPS cao nhất, phù hợp cả máy yếu & laptop văn phòng"
+  },
+  {
+    "slug": "potato-shaders",
+    "name": "Potato Shaders",
+    "desc": "Shader tối ưu riêng cho máy yếu (PC khoai tây) mà vẫn có bóng & nước đẹp"
+  },
+  {
+    "slug": "mellow",
+    "name": "Mellow",
+    "desc": "Shader nhẹ nhàng, ánh nắng ấm áp và mặt nước mượt mà"
+  },
+  {
+    "slug": "sildurs-vibrant-shaders",
+    "name": "Sildur's Vibrant Shaders",
+    "desc": "Màu sắc sống động, có sẵn nhiều mức từ Lite đến Extreme"
+  },
+  {
+    "slug": "complementary-reimagined",
+    "name": "Complementary Reimagined",
+    "desc": "Shader nổi tiếng nhất: giữ chất khối Minecraft nhưng ánh sáng & nước cực đẹp"
+  },
+  {
+    "slug": "complementary-unbound",
+    "name": "Complementary Unbound",
+    "desc": "Mây thể tích, nước phản chiếu chân thật & hiệu ứng bầu trời đỉnh cao"
+  },
+  {
+    "slug": "bsl-shaders",
+    "name": "BSL Shaders",
+    "desc": "Màu sắc rực rỡ, ánh nắng ấm & sương mù kinh điển"
+  },
+  {
+    "slug": "photon-shader",
+    "name": "Photon Shaders",
+    "desc": "Ánh sáng bầu trời thực tế & mây nhiều tầng cực chân thật"
+  },
+  {
+    "slug": "solas-shader",
+    "name": "Solas Shader",
+    "desc": "Ánh sáng ban đêm, cực quang & hang động huyền ảo"
+  },
+  {
+    "slug": "bliss-shader",
+    "name": "Bliss Shaders",
+    "desc": "Hiệu ứng sương mù & thời tiết thay đổi theo vùng cực tự nhiên"
+  },
+  {
+    "slug": "super-duper-vanilla",
+    "name": "Super Duper Vanilla",
+    "desc": "Phong cách ánh sáng sắc nét giống trailer Minecraft"
+  },
+  {
+    "slug": "rethinking-voxels",
+    "name": "Rethinking Voxels",
+    "desc": "Ánh sáng dò tia (Path-tracing) bóng đổ siêu thực cho máy cấu hình mạnh"
+  },
+  {
+    "slug": "astralex",
+    "name": "AstraLex Shaders",
+    "desc": "Bầu trời đêm đầy sao, ngân hà & hiệu ứng ánh sáng điện ảnh"
+  },
+  {
+    "slug": "miniature-shader",
+    "name": "Miniature Shader",
+    "desc": "Hiệu ứng làm mờ nền biến thế giới thành mô hình đồ chơi thu nhỏ"
+  },
+  {
+    "slug": "pastel-shaders",
+    "name": "Pastel Shaders",
+    "desc": "Tông màu pastel dịu nhẹ, thơ mộng rất hợp để chụp ảnh"
+  },
+  {
+    "slug": "nostalgia-shader",
+    "name": "Nostalgia Shader",
+    "desc": "Phong cách ánh sáng hoài cổ nhẹ nhàng như các shader đầu tiên"
+  },
+  {
+    "slug": "kappa-shader",
+    "name": "Kappa Shader",
+    "desc": "Ánh sáng, phản chiếu & mây chân thực độ chi tiết cao"
+  },
+  {
+    "slug": "hysteria-shaders",
+    "name": "Hysteria Shaders",
+    "desc": "Không khí huyền bí, sương mù dày đặc cho sinh tồn & khám phá"
+  },
+  {
+    "slug": "vanilla-plus-shader",
+    "name": "Vanilla Plus Shader",
+    "desc": "Giữ nguyên cảm giác Minecraft gốc nhưng thêm bóng đổ & mây đẹp"
+  },
+  {
+    "slug": "insanity-shader",
+    "name": "Insanity Shader",
+    "desc": "Không khí u ám, sương mù rùng rợn chuyên chơi map kinh dị"
+  }
+]

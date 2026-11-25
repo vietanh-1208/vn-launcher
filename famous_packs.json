@@ -1,0 +1,102 @@
+[
+  {
+    "slug": "fresh-animations",
+    "name": "Fresh Animations",
+    "desc": "Hoạt ảnh quái, dân làng & động vật sống động như trailer (cài thêm EMF + ETF)"
+  },
+  {
+    "slug": "fresh-animations-extensions",
+    "name": "Fresh Animations: Extensions",
+    "desc": "Mở rộng hoạt ảnh cho thêm nhiều quái & sinh vật của Fresh Animations"
+  },
+  {
+    "slug": "tras-fresh-player",
+    "name": "Fresh Moves",
+    "desc": "Hoạt ảnh nhân vật người chơi đi đứng, nhảy, bơi mượt mà cực đẹp"
+  },
+  {
+    "slug": "faithful-32x",
+    "name": "Faithful 32x",
+    "desc": "Nâng độ phân giải khối & vật phẩm lên 32x sắc nét, giữ đúng chất gốc"
+  },
+  {
+    "slug": "faithful-64x",
+    "name": "Faithful 64x",
+    "desc": "Phiên bản 64x siêu chi tiết & sắc nét cho máy tầm trung - cao"
+  },
+  {
+    "slug": "bare-bones",
+    "name": "Bare Bones",
+    "desc": "Đồ hoạ phẳng tối giản giống hệt trailer chính thức, cực nhẹ & tăng FPS"
+  },
+  {
+    "slug": "better-leaves",
+    "name": "Motschen's Better Leaves",
+    "desc": "Làm tán lá cây xum xuê, tự nhiên mà vẫn giữ FPS cao"
+  },
+  {
+    "slug": "fast-better-grass",
+    "name": "Fast Better Grass",
+    "desc": "Phủ cỏ xanh mượt xuống cạnh khối đất mà không gây tụt FPS"
+  },
+  {
+    "slug": "xalis-enhanced-vanilla",
+    "name": "xali's Enhanced Vanilla",
+    "desc": "Tăng chi tiết gạch đá, hoa cỏ, đèn lồng cực đẹp theo phong cách Vanilla"
+  },
+  {
+    "slug": "dramatic-skys",
+    "name": "Dramatic Skys",
+    "desc": "Bầu trời mây thật, bình minh & hoàng hôn rực rỡ không cần Shader"
+  },
+  {
+    "slug": "low-on-fire",
+    "name": "Low On Fire",
+    "desc": "Hạ thấp ngọn lửa trên màn hình khi bị cháy — cực kỳ cần khi PvP"
+  },
+  {
+    "slug": "low-shield-pack",
+    "name": "Low Shield",
+    "desc": "Hạ thấp cái khiên xuống để không che mất tầm nhìn khi chiến đấu"
+  },
+  {
+    "slug": "fullbright-ub",
+    "name": "Fullbright UB",
+    "desc": "Nhìn rõ ban đêm & trong hang tối mà không cần cài thêm mod"
+  },
+  {
+    "slug": "new-glowing-ores",
+    "name": "New Glowing Ores",
+    "desc": "Làm các khối quặng kim cương, sắt, vàng phát sáng nổi bật trong hang"
+  },
+  {
+    "slug": "default-dark-mode",
+    "name": "Default Dark Mode",
+    "desc": "Đổi toàn bộ menu, rương, túi đồ sang nền tối (Dark Mode) dịu mắt"
+  },
+  {
+    "slug": "mandalas-gui-dark-mode",
+    "name": "Mandala's GUI - Dark mode",
+    "desc": "Giao diện Dark Mode sắc nét với đường viền tinh tế cực đẹp"
+  },
+  {
+    "slug": "clean-connected-glass",
+    "name": "Clean Connected Glass",
+    "desc": "Kính trong suốt & nối liền viền gọn đẹp"
+  },
+  {
+    "slug": "even-better-enchants",
+    "name": "Even Better Enchants",
+    "desc": "Mỗi cuốn sách phù phép có hình vẽ riêng biệt cực dễ phân biệt"
+  },
+  {
+    "slug": "enhanced-boss-bars",
+    "name": "Enhanced Boss Bars",
+    "desc": "Trang trí thanh máu Rồng Ender, Wither & Warden đẹp mắt hơn"
+  },
+  {
+    "slug": "icons",
+    "name": "Icons",
+    "desc": "Thêm các biểu tượng nhỏ tinh tế vào nút bấm và menu trong game"
+  }
+]

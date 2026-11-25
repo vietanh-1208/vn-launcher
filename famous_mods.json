@@ -1,0 +1,212 @@
+[
+  {
+    "slug": "jei",
+    "name": "Just Enough Items (JEI)",
+    "desc": "Xem công thức chế tạo, nấu chảy & cách kiếm mọi vật phẩm"
+  },
+  {
+    "slug": "xaeros-minimap",
+    "name": "Xaero's Minimap",
+    "desc": "Bản đồ nhỏ góc màn hình, đánh dấu toạ độ nhà & chỗ chết"
+  },
+  {
+    "slug": "xaeros-world-map",
+    "name": "Xaero's World Map",
+    "desc": "Bản đồ thế giới toàn cảnh (bấm M) đồng bộ với Minimap"
+  },
+  {
+    "slug": "jade",
+    "name": "Jade (WAILA)",
+    "desc": "Chỉ tâm vào khối, rương hoặc quái là hiện tên & lượng máu"
+  },
+  {
+    "slug": "entity-model-features",
+    "name": "[EMF] Entity Model Features",
+    "desc": "Hỗ trợ mô hình quái 3D tuỳ chỉnh (cần có để chạy Fresh Animations)"
+  },
+  {
+    "slug": "entitytexturefeatures",
+    "name": "[ETF] Entity Texture Features",
+    "desc": "Hỗ trợ texture quái phát sáng, chớp mắt (cặp với Fresh Animations)"
+  },
+  {
+    "slug": "zoomify",
+    "name": "Zoomify",
+    "desc": "Phóng to tầm nhìn mượt mà (phím C) thay thế OptiFine Zoom"
+  },
+  {
+    "slug": "continuity",
+    "name": "Continuity",
+    "desc": "Nối liền viền kính & khối giống hệt OptiFine"
+  },
+  {
+    "slug": "lambdynamiclights",
+    "name": "LambDynamicLights",
+    "desc": "Cầm đuốc trên tay hoặc ném ra đất là tự phát sáng xung quanh"
+  },
+  {
+    "slug": "mouse-tweaks",
+    "name": "Mouse Tweaks",
+    "desc": "Giữ & kéo chuột chuyển đồ siêu nhanh trong rương/túi đồ"
+  },
+  {
+    "slug": "item-scroller",
+    "name": "Item Scroller",
+    "desc": "Lăn con lăn chuột để chuyển hoặc chế tạo hàng loạt vật phẩm"
+  },
+  {
+    "slug": "inventory-profiles-next",
+    "name": "Inventory Profiles Next",
+    "desc": "Tự động sắp xếp gọn túi đồ & rương chỉ với 1 nút bấm"
+  },
+  {
+    "slug": "3dskinlayers",
+    "name": "3D Skin Layers",
+    "desc": "Biến lớp áo khoác, mũ, tóc của Skin thành khối nổi 3D cực đẹp"
+  },
+  {
+    "slug": "not-enough-animations",
+    "name": "Not Enough Animations",
+    "desc": "Thêm hoạt ảnh ăn uống, chèo thuyền, cầm bản đồ thật hơn"
+  },
+  {
+    "slug": "visuality",
+    "name": "Visuality",
+    "desc": "Hiệu ứng hạt lấp lánh khi đánh quái, đào quặng & đom đóm ban đêm"
+  },
+  {
+    "slug": "sound-physics-remastered",
+    "name": "Sound Physics Remastered",
+    "desc": "Hiệu ứng âm thanh vang dội trong hang động & dưới nước cực thật"
+  },
+  {
+    "slug": "presence-footsteps",
+    "name": "Presence Footsteps",
+    "desc": "Âm thanh bước chân chi tiết theo từng loại cỏ, đá, gỗ, tuyết"
+  },
+  {
+    "slug": "ambientsounds",
+    "name": "AmbientSounds",
+    "desc": "Thêm âm thanh thiên nhiên sống động: tiếng gió, chim hót, sóng biển"
+  },
+  {
+    "slug": "chat-heads",
+    "name": "Chat Heads",
+    "desc": "Hiện đầu nhân vật bên cạnh tên người chơi trong khung chat"
+  },
+  {
+    "slug": "betterf3",
+    "name": "BetterF3",
+    "desc": "Làm đẹp & tô màu bảng thông số F3 giúp dễ đọc FPS, toạ độ"
+  },
+  {
+    "slug": "controlling",
+    "name": "Controlling",
+    "desc": "Tìm kiếm phím tắt & kiểm tra trùng phím trong cài đặt điều khiển"
+  },
+  {
+    "slug": "enchantment-descriptions",
+    "name": "Enchantment Descriptions",
+    "desc": "Hiện mô tả tác dụng của từng dòng phù phép ngay trên sách/vũ khí"
+  },
+  {
+    "slug": "gamma-utils",
+    "name": "Gamma Utils (Fullbright)",
+    "desc": "Bật sáng ban đêm & trong hang tối chỉ với 1 phím bấm"
+  },
+  {
+    "slug": "clumps",
+    "name": "Clumps",
+    "desc": "Gộp hàng trăm hạt kinh nghiệm XP thành 1 cục chống lag máy farm"
+  },
+  {
+    "slug": "veinminer",
+    "name": "VeinMiner",
+    "desc": "Đào 1 khối quặng là tự đào cả mạch quặng dính liền"
+  },
+  {
+    "slug": "fallingtree",
+    "name": "FallingTree",
+    "desc": "Chặt 1 khúc gỗ dưới gốc là đổ cả cây (tiện chơi sinh tồn)"
+  },
+  {
+    "slug": "shulkerboxtooltip",
+    "name": "Shulker Box Tooltip",
+    "desc": "Di chuột vào hộp Shulker là xem ngay đồ bên trong"
+  },
+  {
+    "slug": "waystones",
+    "name": "Waystones",
+    "desc": "Đặt cột đá dịch chuyển nhanh giữa các căn cứ trong sinh tồn"
+  },
+  {
+    "slug": "travelersbackpack",
+    "name": "Traveler's Backpack",
+    "desc": "Ba lô đeo lưng mở rộng túi đồ kèm bình chứa & túi ngủ"
+  },
+  {
+    "slug": "litematica",
+    "name": "Litematica",
+    "desc": "Hiện bản vẽ mẫu (Schematic) giúp xây công trình lớn chuẩn từng khối"
+  },
+  {
+    "slug": "tweakeroo",
+    "name": "Tweakeroo",
+    "desc": "Bộ công cụ hỗ trợ đặt khối, Redstone & sinh tồn chuyên nghiệp"
+  },
+  {
+    "slug": "minihud",
+    "name": "MiniHUD",
+    "desc": "Hiện gọn toạ độ, FPS, ranh giới Chunk & vùng quái spawn"
+  },
+  {
+    "slug": "freecam",
+    "name": "Freecam",
+    "desc": "Tách camera bay tự do quan sát công trình khi nhân vật đứng yên"
+  },
+  {
+    "slug": "replaymod",
+    "name": "Replay Mod",
+    "desc": "Ghi lại toàn bộ quá trình chơi để quay video góc nhìn điện ảnh"
+  },
+  {
+    "slug": "worldedit",
+    "name": "WorldEdit",
+    "desc": "Xây dựng, sao chép & tạo địa hình hàng loạt bằng lệnh"
+  },
+  {
+    "slug": "axiom",
+    "name": "Axiom",
+    "desc": "Công cụ xây dựng 3D & điêu khắc địa hình hiện đại cho Builder"
+  },
+  {
+    "slug": "simple-voice-chat",
+    "name": "Simple Voice Chat",
+    "desc": "Trò chuyện bằng mic trực tiếp trong game theo khoảng cách gần xa"
+  },
+  {
+    "slug": "emotecraft",
+    "name": "Emotecraft",
+    "desc": "Nhảy múa, vẫy tay & thực hiện các động tác biểu cảm nhân vật"
+  },
+  {
+    "slug": "essential",
+    "name": "Essential Mod",
+    "desc": "Mời bạn bè vào map chơi chung không cần mở server + quản lý Skin"
+  },
+  {
+    "slug": "no-chat-reports",
+    "name": "No Chat Reports",
+    "desc": "Tắt chữ ký báo cáo chat khi chơi trên server cộng đồng"
+  },
+  {
+    "slug": "language-reload",
+    "name": "Language Reload",
+    "desc": "Đổi ngôn ngữ Tiếng Việt/Tiếng Anh tức thì không bị đơ game"
+  },
+  {
+    "slug": "fancymenu",
+    "name": "FancyMenu",
+    "desc": "Tuỳ chỉnh giao diện màn hình chính & nút bấm của Minecraft"
+  }
+]

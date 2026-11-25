@@ -14,8 +14,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("Nguyễn Trọng Việt Anh (Vanh)")]
 [assembly: AssemblyProduct("VN Launcher")]
 [assembly: AssemblyCopyright("Copyright © 2026 Nguyễn Trọng Việt Anh (Vanh)")]
-[assembly: AssemblyVersion("2.0.0.0")]
-[assembly: AssemblyFileVersion("2.0.0.0")]
+[assembly: AssemblyVersion("2.1.0.0")]
+[assembly: AssemblyFileVersion("2.1.0.0")]
 
 namespace VNLauncherSetup
 {
@@ -557,9 +557,68 @@ namespace VNLauncherSetup
             sc.Save();
         }
 
-        [STAThread]
-        public static void Main()
+        private static void SilentUpdate(string targetDir)
         {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(targetDir))
+                {
+                    targetDir = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                        ".vn_launcher"
+                    );
+                }
+                Directory.CreateDirectory(targetDir);
+                string targetExe = Path.Combine(targetDir, "VN Launcher.exe");
+
+                for (int i = 0; i < 15; i++)
+                {
+                    var procs = Process.GetProcessesByName("VN Launcher");
+                    var procs2 = Process.GetProcessesByName("vn-launcher");
+                    if (procs.Length == 0 && procs2.Length == 0) break;
+                    if (i >= 5)
+                    {
+                        foreach (var p in procs) { try { p.Kill(); } catch { } }
+                        foreach (var p in procs2) { try { p.Kill(); } catch { } }
+                    }
+                    Thread.Sleep(250);
+                }
+
+                using (Stream res = Assembly.GetExecutingAssembly().GetManifestResourceStream("VNLauncher.exe"))
+                {
+                    if (res == null) throw new Exception("Không tìm thấy gói ứng dụng nhúng.");
+                    using (FileStream fs = File.Create(targetExe))
+                    {
+                        res.CopyTo(fs);
+                    }
+                }
+
+                try
+                {
+                    using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\VNLauncher"))
+                    {
+                        if (k != null) k.SetValue("DisplayVersion", "2.1.0");
+                    }
+                }
+                catch { }
+
+                Process.Start(new ProcessStartInfo(targetExe) { WorkingDirectory = targetDir, UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Lỗi cập nhật VN Launcher: " + ex.Message, "VN Launcher Update", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        [STAThread]
+        public static void Main(string[] args)
+        {
+            if (args != null && args.Length > 0 && args[0].Equals("/silent", StringComparison.OrdinalIgnoreCase))
+            {
+                string dir = args.Length > 1 ? args[1] : "";
+                SilentUpdate(dir);
+                return;
+            }
             try { SetProcessDPIAware(); } catch { }
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);

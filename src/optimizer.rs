@@ -1,6 +1,7 @@
-use crate::config::InstanceConfig;
+use crate::config::{total_ram_mb, InstanceConfig};
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 /// JVM arguments tuned for a smooth client (Aikar-style G1GC; optional ZGC on Java 21+).
 /// No AlwaysPreTouch / huge -Xms: on 8 GB laptops these force Windows to swap and cause stutter.
@@ -63,10 +64,12 @@ pub fn prepare_game_dir(game_dir: &Path) -> Result<(), String> {
     }
     let options = game_dir.join("options.txt");
     if !options.exists() {
-        let _ = fs::write(
-            &options,
-            "lang:vi_vn\nrenderDistance:12\nsimulationDistance:8\nenableVsync:false\nmaxFps:260\ngraphicsMode:1\nrenderClouds:\"false\"\nentityDistanceScaling:0.75\nbiomeBlendRadius:1\nparticles:1\n",
-        );
+        let initial = if total_ram_mb() <= 4_600 {
+            "lang:vi_vn\nrenderDistance:6\nsimulationDistance:5\nenableVsync:false\nmaxFps:260\ngraphicsMode:0\nrenderClouds:\"false\"\nentityDistanceScaling:0.5\nentityShadows:false\nbiomeBlendRadius:0\nao:0\nmipmapLevels:0\nparticles:2\n"
+        } else {
+            "lang:vi_vn\nrenderDistance:12\nsimulationDistance:8\nenableVsync:false\nmaxFps:260\ngraphicsMode:1\nrenderClouds:\"false\"\nentityDistanceScaling:0.75\nbiomeBlendRadius:1\nparticles:1\n"
+        };
+        let _ = fs::write(&options, initial);
     }
     // Prevent Lithium + ModernFix getTemperature mixin conflict when ModernFix is installed
     let has_modernfix = fs::read_dir(game_dir.join("mods"))
@@ -79,6 +82,91 @@ pub fn prepare_game_dir(game_dir: &Path) -> Result<(), String> {
         ensure_modernfix_compat(game_dir);
     }
     Ok(())
+}
+
+/// Applies Max-FPS / Low-End graphics settings to `options.txt` in-place,
+/// preserving the user's language, keybinds, sound, and other non-graphics settings.
+pub fn optimize_graphics_options(game_dir: &Path, weak_pc: bool) -> Result<(), String> {
+    fs::create_dir_all(game_dir).map_err(|e| e.to_string())?;
+    let options = game_dir.join("options.txt");
+    let existing = fs::read_to_string(&options).unwrap_or_default();
+
+    let presets: &[(&str, &str)] = if weak_pc {
+        &[
+            ("renderDistance", "6"),
+            ("simulationDistance", "5"),
+            ("enableVsync", "false"),
+            ("maxFps", "260"),
+            ("graphicsMode", "0"),
+            ("renderClouds", "\"false\""),
+            ("entityDistanceScaling", "0.5"),
+            ("entityShadows", "false"),
+            ("biomeBlendRadius", "0"),
+            ("ao", "0"),
+            ("mipmapLevels", "0"),
+            ("particles", "2"),
+        ]
+    } else {
+        &[
+            ("renderDistance", "8"),
+            ("simulationDistance", "6"),
+            ("enableVsync", "false"),
+            ("maxFps", "260"),
+            ("graphicsMode", "0"),
+            ("renderClouds", "\"false\""),
+            ("entityDistanceScaling", "0.75"),
+            ("entityShadows", "false"),
+            ("biomeBlendRadius", "0"),
+            ("particles", "1"),
+        ]
+    };
+
+    let mut seen = vec![false; presets.len()];
+    let mut lines: Vec<String> = Vec::new();
+    for raw_line in existing.lines() {
+        let mut replaced = false;
+        if let Some((k, _)) = raw_line.split_once(':') {
+            for (idx, (pk, pv)) in presets.iter().enumerate() {
+                if k == *pk {
+                    lines.push(format!("{}:{}", pk, pv));
+                    seen[idx] = true;
+                    replaced = true;
+                    break;
+                }
+            }
+        }
+        if !replaced {
+            lines.push(raw_line.to_string());
+        }
+    }
+    if lines.is_empty() {
+        lines.push("lang:vi_vn".to_string());
+    }
+    for (idx, (pk, pv)) in presets.iter().enumerate() {
+        if !seen[idx] {
+            lines.push(format!("{}:{}", pk, pv));
+        }
+    }
+    fs::write(&options, lines.join("\n") + "\n").map_err(|e| e.to_string())
+}
+
+/// Registers the Java executable to use High Performance GPU in Windows Graphics Preferences.
+pub fn ensure_high_perf_gpu(java_exe: &Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let exe_path = java_exe.to_string_lossy().replace('\'', "''");
+        let ps = format!(
+            "$p='HKCU:\\Software\\Microsoft\\DirectX\\UserGpuPreferences'; if(!(Test-Path $p)){{New-Item -Path $p -Force|Out-Null}}; Set-ItemProperty -Path $p -Name '{}' -Value 'GpuPreference=2;' -Force",
+            exe_path
+        );
+        let _ = Command::new("powershell")
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &ps])
+            .creation_flags(0x0800_0000)
+            .status();
+    }
+    #[cfg(not(windows))]
+    let _ = java_exe;
 }
 
 pub fn ensure_modernfix_compat(game_dir: &Path) {
@@ -160,4 +248,93 @@ pub fn patch_distant_horizons(game_dir: &Path, lod_radius: u32) -> bool {
         let _ = fs::write(&path, out);
     }
     true
+}
+
+/// Copies a local `.png` skin into `CustomSkinLoader/LocalSkin/skins/<username>.png`
+/// and configures `CustomSkinLoader.json` so Offline accounts display their custom skin.
+pub fn apply_offline_skin(game_dir: &Path, username: &str, skin_src: &Path) -> Result<(), String> {
+    if !skin_src.exists() {
+        return Err("Không tìm thấy file ảnh Skin đã chọn.".into());
+    }
+    let csl_dir = game_dir.join("CustomSkinLoader");
+    let skins_dir = csl_dir.join("LocalSkin").join("skins");
+    fs::create_dir_all(&skins_dir).map_err(|e| e.to_string())?;
+    fs::copy(skin_src, skins_dir.join(format!("{}.png", username))).map_err(|e| e.to_string())?;
+
+    let cfg_path = csl_dir.join("CustomSkinLoader.json");
+    let should_write = fs::read_to_string(&cfg_path)
+        .map(|s| !s.contains("\"LocalSkin\""))
+        .unwrap_or(true);
+    if should_write {
+        let cfg = serde_json::json!({
+            "enable": true,
+            "enableDynamicSkull": true,
+            "enableTransparentSkin": true,
+            "forceLoadAllTextures": true,
+            "loadlist": [
+                { "name": "LocalSkin", "type": "Legacy", "checkPNG": false, "skin": "LocalSkin/skins/{USERNAME}.png", "model": "auto" },
+                { "name": "Mojang", "type": "MojangAPI" },
+                { "name": "LittleSkin", "type": "CustomSkinAPI", "root": "https://littleskin.cn/csl/" }
+            ]
+        });
+        let _ = fs::write(&cfg_path, serde_json::to_string_pretty(&cfg).unwrap_or_default());
+    }
+    Ok(())
+}
+
+pub fn dir_size_bytes(path: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(path) else { return 0 };
+    let mut total = 0u64;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if let Ok(meta) = entry.metadata() {
+            if meta.is_dir() {
+                total += dir_size_bytes(&p);
+            } else {
+                total += meta.len();
+            }
+        }
+    }
+    total
+}
+
+/// Zips a Minecraft world directory into `dest_zip`.
+pub fn backup_world_zip(world_dir: &Path, dest_zip: &Path) -> Result<(), String> {
+    if let Some(parent) = dest_zip.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let file = fs::File::create(dest_zip).map_err(|e| e.to_string())?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+
+    fn add_dir(
+        root: &Path,
+        cur: &Path,
+        zip: &mut zip::ZipWriter<fs::File>,
+        options: zip::write::SimpleFileOptions,
+    ) -> Result<(), String> {
+        let entries = fs::read_dir(cur).map_err(|e| e.to_string())?;
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            // Skip Windows/Java session lock file so backup succeeds cleanly
+            if name == "session.lock" {
+                continue;
+            }
+            let rel = p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+            if p.is_dir() {
+                let _ = zip.add_directory(format!("{}/", rel), options);
+                add_dir(root, &p, zip, options)?;
+            } else if let Ok(mut f) = fs::File::open(&p) {
+                zip.start_file(&rel, options).map_err(|e| e.to_string())?;
+                std::io::copy(&mut f, zip).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    add_dir(world_dir, world_dir, &mut zip, options)?;
+    zip.finish().map_err(|e| e.to_string())?;
+    Ok(())
 }

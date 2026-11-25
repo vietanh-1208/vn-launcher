@@ -5,6 +5,7 @@ mod config;
 mod fabric;
 mod java;
 mod launcher;
+mod modloader;
 mod modrinth;
 mod mojang;
 mod optimizer;
@@ -17,7 +18,7 @@ use eframe::egui::{
 };
 use java::{ensure_java_runtime, find_installed_java};
 use launcher::{prepare_and_launch, LaunchAccount};
-use modrinth::{ContentKind, InstalledItem, SearchHit, DH_SLUG, FPS_PACK, IRIS_SLUG};
+use modrinth::{ContentKind, FamousMod, InstalledItem, SearchHit, DH_SLUG, FPS_PACK, IRIS_SLUG};
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -54,6 +55,7 @@ const POPULAR_VERSIONS: &[&str] = &[
 enum Tab {
     Home,
     Content,
+    Worlds,
     Servers,
     Accounts,
     Logs,
@@ -64,6 +66,53 @@ enum Tab {
 enum ContentView {
     Browse,
     Installed,
+}
+
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const GITHUB_LATEST_RELEASE_API: &str = "https://api.github.com/repos/vietanh-1208/vn-launcher/releases/latest";
+
+#[derive(Clone)]
+enum UpdateState {
+    Idle,
+    Checking,
+    UpToDate,
+    Available { version: String, download_url: String },
+    Downloading,
+    Error(String),
+}
+
+#[derive(Clone, serde::Deserialize)]
+struct NewsInfo {
+    title: String,
+    message: String,
+    #[serde(default = "default_discord_url")]
+    discord_url: String,
+    #[serde(default = "default_srv_name")]
+    featured_server_name: String,
+    #[serde(default = "default_srv_ip")]
+    featured_server_ip: String,
+}
+
+fn default_discord_url() -> String {
+    "https://discord.gg/gmRfdF342s".into()
+}
+fn default_srv_name() -> String {
+    "NGV SMP".into()
+}
+fn default_srv_ip() -> String {
+    "ngvsmp.asia:25616".into()
+}
+
+impl Default for NewsInfo {
+    fn default() -> Self {
+        Self {
+            title: "Chào mừng đến với VN Launcher 2.1!".into(),
+            message: "Tham gia cộng đồng Discord & chiến cùng anh em tại server NGV SMP (ngvsmp.asia:25616) — hỗ trợ cả Offline & Bản quyền!".into(),
+            discord_url: default_discord_url(),
+            featured_server_name: default_srv_name(),
+            featured_server_ip: default_srv_ip(),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -111,6 +160,13 @@ struct App {
     login_state: Arc<Mutex<LoginState>>,
     pending_accounts: Arc<Mutex<Vec<Account>>>,
     client_id_input: String,
+    update_state: Arc<Mutex<UpdateState>>,
+    famous_mods: Arc<Mutex<Vec<FamousMod>>>,
+    famous_packs: Arc<Mutex<Vec<FamousMod>>>,
+    famous_shaders: Arc<Mutex<Vec<FamousMod>>>,
+    server_pings: Arc<Mutex<std::collections::HashMap<String, Option<u128>>>>,
+    news: Arc<Mutex<NewsInfo>>,
+    avatar_cache: std::collections::HashMap<String, egui::TextureHandle>,
 }
 
 impl App {
@@ -127,6 +183,16 @@ impl App {
         }
         if config.instances.iter().all(|i| i.id != config.selected_instance_id) {
             config.selected_instance_id = config.instances.first().map(|i| i.id.clone()).unwrap_or_default();
+        }
+        if config.saved_servers.iter().all(|s| !s.address.eq_ignore_ascii_case("ngvsmp.asia:25616")) {
+            config.saved_servers.insert(
+                0,
+                ServerEntry {
+                    name: "NGV SMP".into(),
+                    address: "ngvsmp.asia:25616".into(),
+                },
+            );
+            let _ = config.save();
         }
 
         let versions = Arc::new(Mutex::new(
@@ -154,6 +220,50 @@ impl App {
         }
 
         let client_id_input = config.ms_client_id.clone();
+        let update_state = Arc::new(Mutex::new(UpdateState::Idle));
+        spawn_update_check(Arc::clone(&update_state), false);
+        let famous_mods = Arc::new(Mutex::new(modrinth::default_famous_mods()));
+        let famous_packs = Arc::new(Mutex::new(modrinth::default_famous_packs()));
+        let famous_shaders = Arc::new(Mutex::new(modrinth::default_famous_shaders()));
+        {
+            let fm = Arc::clone(&famous_mods);
+            let fp = Arc::clone(&famous_packs);
+            let fs_list = Arc::clone(&famous_shaders);
+            thread::spawn(move || {
+                if let Ok(client) = mojang::build_http_client(10) {
+                    if let Some(remote) = modrinth::fetch_remote_famous_list(&client, "famous_mods.json") {
+                        if let Ok(mut g) = fm.lock() { *g = remote; }
+                    }
+                    if let Some(remote) = modrinth::fetch_remote_famous_list(&client, "famous_packs.json") {
+                        if let Ok(mut g) = fp.lock() { *g = remote; }
+                    }
+                    if let Some(remote) = modrinth::fetch_remote_famous_list(&client, "famous_shaders.json") {
+                        if let Ok(mut g) = fs_list.lock() { *g = remote; }
+                    }
+                }
+            });
+        }
+        let news = Arc::new(Mutex::new(NewsInfo::default()));
+        {
+            let news_arc = Arc::clone(&news);
+            thread::spawn(move || {
+                if let Ok(client) = mojang::build_http_client(10) {
+                    if let Ok(resp) = client
+                        .get("https://raw.githubusercontent.com/vietanh-1208/vn-launcher/main/news.json")
+                        .header("User-Agent", "VN-Launcher/2.1")
+                        .send()
+                    {
+                        if resp.status().is_success() {
+                            if let Ok(n) = resp.json::<NewsInfo>() {
+                                if let Ok(mut g) = news_arc.lock() {
+                                    *g = n;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
         Self {
             config,
             accounts,
@@ -184,6 +294,13 @@ impl App {
             login_state: Arc::new(Mutex::new(LoginState::Idle)),
             pending_accounts: Arc::new(Mutex::new(Vec::new())),
             client_id_input,
+            update_state,
+            famous_mods,
+            famous_packs,
+            famous_shaders,
+            server_pings: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            news,
+            avatar_cache: std::collections::HashMap::new(),
         }
     }
 
@@ -273,12 +390,14 @@ impl App {
                         uuid: acc.uuid.clone(),
                         access_token: "0".into(),
                         user_type: "legacy".into(),
+                        offline_skin: acc.offline_skin.clone(),
                     },
                     AccountKind::Microsoft => LaunchAccount {
                         username: acc.username.clone(),
                         uuid: acc.uuid.clone(),
                         access_token: acc.access_token.clone(),
                         user_type: "msa".into(),
+                        offline_skin: String::new(),
                     },
                 };
                 prepare_and_launch(&cfg, &instance, &la, server, &status)
@@ -369,13 +488,14 @@ impl App {
         let Some(inst) = self.selected() else { return };
         let kind = self.content_kind;
         let query = self.search_query.trim().to_string();
+        let loader_slug = inst.loader.modrinth_slug().to_string();
         let results = Arc::clone(&self.search_results);
         let searching = Arc::clone(&self.searching);
         let status = Arc::clone(&self.status);
         searching.store(true, Ordering::SeqCst);
         thread::spawn(move || {
             if let Ok(client) = mojang::build_http_client(20) {
-                match modrinth::search(&client, kind, &query, &inst.mc_version) {
+                match modrinth::search(&client, kind, &query, &inst.mc_version, &loader_slug) {
                     Ok(hits) => {
                         if let Ok(mut r) = results.lock() {
                             *r = hits;
@@ -398,21 +518,59 @@ impl App {
         }
         let Some(inst) = self.selected() else { return };
         let game_dir = self.game_dir(&inst.id);
+        let loader_slug = inst.loader.modrinth_slug().to_string();
         let busy = Arc::clone(&self.busy);
         let status = Arc::clone(&self.status);
         busy.store(true, Ordering::SeqCst);
         thread::spawn(move || {
-            if let Ok(client) = mojang::build_http_client(90) {
-                let msg = match modrinth::install_project(&client, kind, &slug, &inst.mc_version, &game_dir, &status) {
-                    Ok(_) => {
-                        if slug == "modernfix" {
+            if let Ok(client) = mojang::build_http_client(120) {
+                let msg = if kind == ContentKind::Modpack {
+                    match modrinth::install_mrpack_from_modrinth(&client, &slug, &inst.mc_version, &loader_slug, &game_dir, &status) {
+                        Ok((pack_name, _mc, _loader, count)) => {
                             optimizer::ensure_modernfix_compat(&game_dir);
-                        } else if slug == "bobby" {
-                            optimizer::patch_bobby(&game_dir, 1024);
+                            format!("Đã cài Modpack {} ({} file).", pack_name, count)
                         }
-                        format!("Đã cài {}.", title)
+                        Err(e) => format!("Không cài được Modpack {}: {}", title, e),
                     }
-                    Err(e) => format!("Không cài được {}: {}", title, e),
+                } else {
+                    match modrinth::install_project_for_loader(&client, kind, &slug, &inst.mc_version, &loader_slug, &game_dir, &status) {
+                        Ok(_) => {
+                            if slug == "modernfix" {
+                                optimizer::ensure_modernfix_compat(&game_dir);
+                            } else if slug == "bobby" {
+                                optimizer::patch_bobby(&game_dir, 1024);
+                            }
+                            format!("Đã cài {}.", title)
+                        }
+                        Err(e) => format!("Không cài được {}: {}", title, e),
+                    }
+                };
+                if let Ok(mut s) = status.lock() {
+                    *s = msg;
+                }
+            }
+            busy.store(false, Ordering::SeqCst);
+        });
+        self.needs_refresh = true;
+    }
+
+    fn install_local_mrpack(&mut self, mrpack_path: PathBuf) {
+        if self.busy.load(Ordering::SeqCst) {
+            return;
+        }
+        let Some(inst) = self.selected() else { return };
+        let game_dir = self.game_dir(&inst.id);
+        let busy = Arc::clone(&self.busy);
+        let status = Arc::clone(&self.status);
+        busy.store(true, Ordering::SeqCst);
+        thread::spawn(move || {
+            if let Ok(client) = mojang::build_http_client(120) {
+                let msg = match modrinth::install_mrpack_file(&client, &mrpack_path, &game_dir, &status) {
+                    Ok((pack_name, mc, _loader, count)) => {
+                        optimizer::ensure_modernfix_compat(&game_dir);
+                        format!("Đã cài xong Modpack {} (MC {}, {} file).", pack_name, mc, count)
+                    }
+                    Err(e) => format!("Lỗi cài Modpack: {}", e),
                 };
                 if let Ok(mut s) = status.lock() {
                     *s = msg;
@@ -679,6 +837,7 @@ impl eframe::App for App {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.tab {
                     Tab::Home => self.home_tab(ui, ctx),
                     Tab::Content => self.content_tab(ui),
+                    Tab::Worlds => self.worlds_tab(ui),
                     Tab::Servers => self.servers_tab(ui, ctx),
                     Tab::Accounts => self.accounts_tab(ui, ctx),
                     Tab::Logs => self.logs_tab(ui, ctx),
@@ -806,7 +965,8 @@ impl App {
 
                 for (tab, label) in [
                     (Tab::Home, "Trang chủ"),
-                    (Tab::Content, "Mod · Gói tài nguyên · Shader"),
+                    (Tab::Content, "Mod · Gói · Shader · Modpack"),
+                    (Tab::Worlds, "Thế giới & Sao lưu"),
                     (Tab::Servers, "Máy chủ"),
                     (Tab::Accounts, "Tài khoản"),
                     (Tab::Logs, "Nhật ký game"),
@@ -884,7 +1044,10 @@ impl App {
                         ui.label(RichText::new("© 2026").size(11.0).color(MUTED));
                         ui.hyperlink_to(RichText::new("Việt Anh (Vanh)").size(11.0).strong(), "https://github.com/vietanh-1208");
                     });
-                    ui.label(RichText::new("VN Launcher 2.0").size(11.5).strong().color(GREEN_DARK));
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("VN Launcher {}", APP_VERSION)).size(11.5).strong().color(GREEN_DARK));
+                        ui.hyperlink_to(RichText::new("💬 Discord").size(11.5).strong(), "https://discord.gg/gmRfdF342s");
+                    });
                 });
             });
     }
@@ -915,7 +1078,9 @@ impl App {
         let mut install_bobby = false;
         let mut remove_1024 = false;
         let mut install_fps = false;
+        let mut optimize_gfx = false;
         let mut ask_delete = false;
+        let mut quick_join_srv: Option<String> = None;
         let total_ram = total_ram_mb();
         let rec_ram = recommended_ram_mb();
         let max_ram = max_ram_mb();
@@ -939,6 +1104,60 @@ impl App {
             ui.add_space(12.0);
         }
 
+        // Update available banner
+        let upd_snap = self.update_state.lock().map(|u| u.clone()).unwrap_or(UpdateState::Idle);
+        if let UpdateState::Available { version, download_url } = upd_snap {
+            egui::Frame::none()
+                .fill(GREEN_SOFT)
+                .stroke(Stroke::new(1.5_f32, GREEN))
+                .rounding(Rounding::same(12.0))
+                .inner_margin(egui::Margin::symmetric(16.0, 10.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("🎉 Có bản cập nhật mới v{} trên GitHub!", version)).size(14.0).strong().color(GREEN_DEEP));
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.add(btn_primary(&format!("⬇ Cập nhật ngay (v{})", version))).clicked() {
+                                start_self_update(download_url, Arc::clone(&self.update_state), Arc::clone(&self.status));
+                            }
+                        });
+                    });
+                });
+            ui.add_space(12.0);
+        } else if matches!(upd_snap, UpdateState::Downloading) {
+            egui::Frame::none()
+                .fill(GREEN_SOFT)
+                .stroke(Stroke::new(1.5_f32, GREEN))
+                .rounding(Rounding::same(12.0))
+                .inner_margin(egui::Margin::symmetric(16.0, 10.0))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new("Đang tải bản cập nhật mới nhất và khởi động lại...").size(14.0).strong().color(GREEN_DEEP));
+                    });
+                });
+            ui.add_space(12.0);
+        }
+
+        let news_snap = self.news.lock().map(|n| n.clone()).unwrap_or_default();
+        card(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(format!("📢 {}", news_snap.title)).size(15.0).strong().color(GREEN_DEEP));
+                    ui.label(RichText::new(&news_snap.message).size(12.5).color(TEXT));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.hyperlink_to(RichText::new("💬 Discord").size(13.0).strong(), &news_snap.discord_url);
+                    if !news_snap.featured_server_ip.trim().is_empty()
+                        && ui
+                            .add_enabled(!busy, btn_primary(&format!("🎮 Vào {}", news_snap.featured_server_name)))
+                            .clicked()
+                    {
+                        quick_join_srv = Some(news_snap.featured_server_ip.clone());
+                    }
+                });
+            });
+        });
+        ui.add_space(12.0);
         // Header
         card(ui, |ui| {
             ui.horizontal(|ui| {
@@ -1012,11 +1231,15 @@ impl App {
 
                 ui.label(RichText::new("Bộ nạp mod").color(MUTED));
                 ui.horizontal(|ui| {
-                    if ui.selectable_value(&mut inst.loader, ModLoader::Fabric, "Fabric (chạy được mod)").changed() {
-                        save = true;
-                    }
-                    if ui.selectable_value(&mut inst.loader, ModLoader::Vanilla, "Vanilla (bản gốc)").changed() {
-                        save = true;
+                    for (ldr, lbl) in [
+                        (ModLoader::Fabric, "Fabric (Nhanh nhất)"),
+                        (ModLoader::NeoForge, "NeoForge"),
+                        (ModLoader::Forge, "Forge"),
+                        (ModLoader::Vanilla, "Vanilla (bản gốc)"),
+                    ] {
+                        if ui.selectable_value(&mut inst.loader, ldr, lbl).changed() {
+                            save = true;
+                        }
                     }
                 });
                 ui.end_row();
@@ -1073,6 +1296,13 @@ impl App {
                         save = true;
                     }
                 }
+            });
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.add_enabled(!busy, btn_primary("⚡ Tự động tối ưu đồ hoạ (Max FPS / Máy yếu)")).clicked() {
+                    optimize_gfx = true;
+                }
+                hint(ui, "Áp dụng cho cả bản gốc Vanilla (không cần mod): Đồ hoạ Nhanh, tắt bóng/sương/hạt thừa.");
             });
             if inst.loader == ModLoader::Fabric && !has_sodium {
                 ui.add_space(6.0);
@@ -1243,8 +1473,22 @@ impl App {
         if install_fps {
             self.install_pack(FPS_PACK, "Bộ 22 Mod Tối Ưu Ultra FPS");
         }
+        if optimize_gfx {
+            let weak = total_ram <= 4_600;
+            match optimizer::optimize_graphics_options(&gd, weak) {
+                Ok(_) => self.set_status(if weak {
+                    "Đã tự động tối ưu đồ hoạ mức Máy yếu (6 đoạn, Đồ hoạ Nhanh)!"
+                } else {
+                    "Đã tự động tối ưu đồ hoạ Max FPS (8 đoạn, Đồ hoạ Nhanh, tắt hiệu ứng nặng)!"
+                }),
+                Err(e) => self.set_status(format!("Không chỉnh được options.txt: {}", e)),
+            }
+        }
         if ask_delete {
             self.confirm_delete = Some(id);
+        }
+        if let Some(addr) = quick_join_srv {
+            self.launch(_ctx, Some(addr));
         }
     }
 
@@ -1259,15 +1503,18 @@ impl App {
 
         card(ui, |ui| {
             ui.horizontal(|ui| {
-                for kind in [ContentKind::Mod, ContentKind::ResourcePack, ContentKind::Shader] {
+                for kind in [ContentKind::Mod, ContentKind::ResourcePack, ContentKind::Shader, ContentKind::Modpack] {
                     let sel = self.content_kind == kind;
                     let b = egui::Button::new(RichText::new(kind.label()).strong().color(if sel { WHITE } else { GREEN_DARK }))
                         .fill(if sel { GREEN } else { GREEN_SOFT })
                         .stroke(Stroke::NONE)
                         .rounding(Rounding::same(8.0))
-                        .min_size(Vec2::new(130.0, 34.0));
+                        .min_size(Vec2::new(110.0, 34.0));
                     if ui.add(b).clicked() && !sel {
                         self.content_kind = kind;
+                        if kind == ContentKind::Modpack {
+                            self.content_view = ContentView::Browse;
+                        }
                         self.needs_refresh = true;
                         self.search_results.lock().map(|mut r| r.clear()).ok();
                         self.search();
@@ -1279,7 +1526,11 @@ impl App {
                     }
                     if ui.add(btn_soft("+ Thêm file từ máy")).clicked() {
                         let ext = self.content_kind.file_ext();
-                        if let Some(files) = rfd::FileDialog::new().add_filter(ext, &[ext]).pick_files() {
+                        if self.content_kind == ContentKind::Modpack {
+                            if let Some(file) = rfd::FileDialog::new().add_filter("Modrinth Modpack", &["mrpack"]).pick_file() {
+                                self.install_local_mrpack(file);
+                            }
+                        } else if let Some(files) = rfd::FileDialog::new().add_filter(ext, &[ext]).pick_files() {
                             let dir = gd.join(self.content_kind.folder());
                             let _ = fs::create_dir_all(&dir);
                             for f in files {
@@ -1325,6 +1576,82 @@ impl App {
                 });
             });
             ui.add_space(10.0);
+        }
+        if self.content_kind == ContentKind::ResourcePack || self.content_kind == ContentKind::Shader {
+            let installed_snapshot = self.installed.clone();
+            let list = if self.content_kind == ContentKind::ResourcePack {
+                self.famous_packs.lock().map(|g| g.clone()).unwrap_or_default()
+            } else {
+                self.famous_shaders.lock().map(|g| g.clone()).unwrap_or_default()
+            };
+            let (card_title, card_hint, id_salt) = if self.content_kind == ContentKind::ResourcePack {
+                (
+                    "🎨 Gói Tài Nguyên (Resource Pack) Nổi Tiếng",
+                    "Tổng hợp các Resource Pack nổi tiếng nhất (Fresh Animations, Faithful 32x/64x, Bare Bones, Dark Mode...) — bấm + Cài là dùng ngay.",
+                    "famous_packs_list",
+                )
+            } else {
+                (
+                    "✨ Shader Đẹp & Nhẹ Nổi Tiếng",
+                    "Từ MakeUp Ultra Fast (siêu nhẹ cho máy yếu) tới Complementary Reimagined / Unbound / BSL / Photon — tự động tương thích Iris.",
+                    "famous_shaders_list",
+                )
+            };
+            let have_count = list
+                .iter()
+                .filter(|item| installed_snapshot.iter().any(|i| modrinth::matches_mod_slug(&i.name, &item.slug)))
+                .count();
+            let mut pick_install: Option<(String, String)> = None;
+            card(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(card_title).size(16.0).strong().color(TEXT));
+                    pill(ui, &format!("Đã cài {}/{}", have_count, list.len()));
+                });
+                ui.add_space(4.0);
+                hint(ui, card_hint);
+                ui.add_space(6.0);
+                egui::CollapsingHeader::new(
+                    RichText::new(format!("Danh sách {} lựa chọn nổi tiếng (bấm + Cài)", list.len()))
+                        .size(13.5)
+                        .strong()
+                        .color(GREEN_DARK),
+                )
+                .id_salt(id_salt)
+                .default_open(true)
+                .show(ui, |ui| {
+                    ui.add_space(4.0);
+                    for entry in &list {
+                        let already = installed_snapshot
+                            .iter()
+                            .any(|i| modrinth::matches_mod_slug(&i.name, &entry.slug));
+                        egui::Frame::none()
+                            .fill(GREEN_MIST)
+                            .stroke(Stroke::new(1.0_f32, BORDER))
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new(&entry.name).size(13.5).strong().color(TEXT));
+                                        ui.label(RichText::new(&entry.desc).size(12.0).color(MUTED));
+                                    });
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if already {
+                                            pill(ui, "✓ Đã cài");
+                                        } else if ui.add_enabled(!busy, btn_primary("+ Cài")).clicked() {
+                                            pick_install = Some((entry.slug.clone(), entry.name.clone()));
+                                        }
+                                    });
+                                });
+                            });
+                        ui.add_space(4.0);
+                    }
+                });
+            });
+            ui.add_space(10.0);
+            if let Some((slug, title)) = pick_install {
+                self.install_content(self.content_kind, slug, title);
+            }
         }
         if self.content_kind == ContentKind::Mod && inst.loader == ModLoader::Fabric {
             let installed_snapshot = self.installed.clone();
@@ -1411,6 +1738,76 @@ impl App {
                                             }
                                         } else if ui.add_enabled(!busy, btn_primary("+ Cài")).clicked() {
                                             single_install = Some(((*slug).to_string(), mod_title.to_string()));
+                                        }
+                                    });
+                                });
+                            });
+                        ui.add_space(4.0);
+                    }
+                });
+            });
+            ui.add_space(10.0);
+
+            let famous_list = self.famous_mods.lock().map(|g| g.clone()).unwrap_or_default();
+            let famous_have = famous_list
+                .iter()
+                .filter(|fm| installed_snapshot.iter().any(|i| modrinth::matches_mod_slug(&i.name, &fm.slug)))
+                .count();
+            card(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("⭐ Mod Nổi Tiếng Được Yêu Thích").size(16.0).strong().color(TEXT));
+                    pill(ui, &format!("Đã cài {}/{} mod", famous_have, famous_list.len()));
+                });
+                ui.add_space(4.0);
+                hint(
+                    ui,
+                    &format!(
+                        "Tổng hợp các mod nổi tiếng nhất (JEI, Xaero's Minimap, World Map, Jade, Zoomify, Continuity, 3D Skin, Sound Physics...) — tự đồng bộ danh sách mới từ GitHub & chạy chuẩn trên Minecraft {}.",
+                        inst.mc_version
+                    ),
+                );
+                ui.add_space(6.0);
+                egui::CollapsingHeader::new(
+                    RichText::new(format!(
+                        "Danh sách {} Mod Nổi Tiếng (bấm + Cài hoặc bật/tắt)",
+                        famous_list.len()
+                    ))
+                    .size(13.5)
+                    .strong()
+                    .color(GREEN_DARK),
+                )
+                .id_salt("famous_mods_list")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.add_space(4.0);
+                    for fm in &famous_list {
+                        let found = installed_snapshot
+                            .iter()
+                            .find(|i| modrinth::matches_mod_slug(&i.name, &fm.slug))
+                            .cloned();
+                        egui::Frame::none()
+                            .fill(GREEN_MIST)
+                            .stroke(Stroke::new(1.0_f32, BORDER))
+                            .rounding(Rounding::same(8.0))
+                            .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.vertical(|ui| {
+                                        ui.label(RichText::new(&fm.name).size(13.5).strong().color(TEXT));
+                                        ui.label(RichText::new(&fm.desc).size(12.0).color(MUTED));
+                                    });
+                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                        if let Some(item) = found {
+                                            if item.enabled {
+                                                pill(ui, "Đang bật");
+                                            } else {
+                                                pill(ui, "Đang tắt");
+                                            }
+                                            if ui.add(btn_soft(if item.enabled { "Tắt" } else { "Bật" })).clicked() {
+                                                toggle_item = Some(item);
+                                            }
+                                        } else if ui.add_enabled(!busy, btn_primary("+ Cài")).clicked() {
+                                            single_install = Some((fm.slug.clone(), fm.name.clone()));
                                         }
                                     });
                                 });
@@ -1536,10 +1933,140 @@ impl App {
         }
     }
 
+    // ---------------- WORLDS & BACKUP ----------------
+    fn worlds_tab(&mut self, ui: &mut egui::Ui) {
+        let Some(inst) = self.selected() else {
+            hint(ui, "Hãy tạo một phiên bản game trước.");
+            return;
+        };
+        let gd = self.game_dir(&inst.id);
+        let saves_dir = gd.join("saves");
+        let backups_dir = gd.join("backups");
+        let busy = self.busy.load(Ordering::SeqCst);
+
+        card(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    title(ui, &format!("Thế giới & Sao lưu — {}", inst.name));
+                    hint(ui, "Sao lưu nhanh thế giới thành file .zip để tránh mất map khi cài hoặc thử mod mới.");
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.add(btn_soft("📁 Mở thư mục Backups")).clicked() {
+                        self.open_folder(backups_dir.clone());
+                    }
+                    if ui.add(btn_soft("📂 Mở thư mục saves")).clicked() {
+                        self.open_folder(saves_dir.clone());
+                    }
+                });
+            });
+        });
+        ui.add_space(12.0);
+
+        let mut worlds: Vec<(String, PathBuf, u64)> = Vec::new();
+        if let Ok(entries) = fs::read_dir(&saves_dir) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() && p.join("level.dat").exists() {
+                    let name = e.file_name().to_string_lossy().to_string();
+                    let bytes = optimizer::dir_size_bytes(&p);
+                    worlds.push((name, p, bytes));
+                }
+            }
+        }
+        worlds.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+
+        if worlds.is_empty() {
+            card(ui, |ui| {
+                hint(ui, "Chưa có thế giới nào trong phiên bản này. Vào game tạo một thế giới chơi đơn rồi quay lại đây để sao lưu 1 chạm!");
+            });
+            return;
+        }
+
+        let mut backup_req: Option<(String, PathBuf)> = None;
+        let mut open_req: Option<PathBuf> = None;
+        for (name, path, bytes) in worlds {
+            let mb = bytes as f64 / (1024.0 * 1024.0);
+            card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(RichText::new(&name).size(15.5).strong().color(TEXT));
+                        ui.label(RichText::new(format!("Dung lượng: {:.1} MB", mb)).size(12.0).color(MUTED));
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.add(btn_soft("📂 Mở thư mục")).clicked() {
+                            open_req = Some(path.clone());
+                        }
+                        if ui.add_enabled(!busy, btn_primary("💾 Sao lưu (.zip)")).clicked() {
+                            backup_req = Some((name.clone(), path.clone()));
+                        }
+                    });
+                });
+            });
+            ui.add_space(8.0);
+        }
+
+        if let Some(p) = open_req {
+            self.open_folder(p);
+        }
+        if let Some((name, world_path)) = backup_req {
+            let ts = auth::now_secs();
+            let safe_name: String = name.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
+            let dest_zip = backups_dir.join(format!("{}_{}.zip", safe_name, ts));
+            let busy_flag = Arc::clone(&self.busy);
+            let status = Arc::clone(&self.status);
+            busy_flag.store(true, Ordering::SeqCst);
+            if let Ok(mut s) = status.lock() {
+                *s = format!("Đang nén sao lưu thế giới {}...", name);
+            }
+            thread::spawn(move || {
+                let msg = match optimizer::backup_world_zip(&world_path, &dest_zip) {
+                    Ok(_) => format!("✓ Đã sao lưu thế giới \"{}\" vào backups/{}", name, dest_zip.file_name().unwrap_or_default().to_string_lossy()),
+                    Err(e) => format!("Lỗi sao lưu {}: {}", name, e),
+                };
+                if let Ok(mut s) = status.lock() {
+                    *s = msg;
+                }
+                busy_flag.store(false, Ordering::SeqCst);
+            });
+        }
+    }
+
     // ---------------- SERVERS ----------------
     fn servers_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         card(ui, |ui| {
-            title(ui, "Thêm máy chủ");
+            ui.horizontal(|ui| {
+                title(ui, "Thêm máy chủ");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui.add(btn_soft("🔄 Kiểm tra Online / Ping")).clicked() {
+                        let list = self.config.saved_servers.clone();
+                        let pings = Arc::clone(&self.server_pings);
+                        thread::spawn(move || {
+                            use std::net::{TcpStream, ToSocketAddrs};
+                            use std::time::Instant;
+                            for srv in list {
+                                let addr_str = if srv.address.contains(':') {
+                                    srv.address.clone()
+                                } else {
+                                    format!("{}:25565", srv.address)
+                                };
+                                let ms = addr_str
+                                    .to_socket_addrs()
+                                    .ok()
+                                    .and_then(|mut it| it.next())
+                                    .and_then(|sa| {
+                                        let t0 = Instant::now();
+                                        TcpStream::connect_timeout(&sa, Duration::from_secs(2))
+                                            .ok()
+                                            .map(|_| t0.elapsed().as_millis())
+                                    });
+                                if let Ok(mut map) = pings.lock() {
+                                    map.insert(srv.address, ms);
+                                }
+                            }
+                        });
+                    }
+                });
+            });
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut self.new_server_name).desired_width(180.0).hint_text("Tên gợi nhớ"));
@@ -1559,6 +2086,7 @@ impl App {
         ui.add_space(12.0);
 
         let running = self.game_running.load(Ordering::SeqCst) || self.busy.load(Ordering::SeqCst);
+        let ping_map = self.server_pings.lock().map(|m| m.clone()).unwrap_or_default();
         let mut join: Option<String> = None;
         let mut remove: Option<usize> = None;
         if self.config.saved_servers.is_empty() {
@@ -1568,7 +2096,17 @@ impl App {
             card(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.vertical(|ui| {
-                        ui.label(RichText::new(&s.name).size(15.0).strong().color(TEXT));
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&s.name).size(15.0).strong().color(TEXT));
+                            if let Some(ping_opt) = ping_map.get(&s.address) {
+                                match ping_opt {
+                                    Some(ms) => pill(ui, &format!("🟢 Online · {} ms", ms)),
+                                    None => {
+                                        ui.label(RichText::new("🔴 Offline / Không phản hồi").size(12.0).color(RED));
+                                    }
+                                }
+                            }
+                        });
                         ui.label(RichText::new(&s.address).size(12.5).color(GREEN_DARK));
                     });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1599,11 +2137,15 @@ impl App {
             ui.add_space(8.0);
             let mut make_active: Option<String> = None;
             let mut remove: Option<String> = None;
+            let mut pick_skin_for: Option<(String, String)> = None;
+            let mut clear_skin_for: Option<String> = None;
             if self.accounts.accounts.is_empty() {
                 hint(ui, "Chưa có tài khoản nào.");
             }
             for a in &self.accounts.accounts {
                 let active = self.accounts.active_id.as_deref() == Some(a.id.as_str());
+                let has_skin = a.kind == AccountKind::Offline && !a.offline_skin.trim().is_empty() && Path::new(&a.offline_skin).exists();
+                let tex_id = ensure_avatar_texture(&mut self.avatar_cache, ctx, a);
                 egui::Frame::none()
                     .fill(if active { GREEN_MIST } else { WHITE })
                     .rounding(Rounding::same(10.0))
@@ -1612,13 +2154,28 @@ impl App {
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         ui.horizontal(|ui| {
+                            ui.image((tex_id, Vec2::splat(32.0)));
+                            ui.add_space(6.0);
                             ui.vertical(|ui| {
-                                ui.label(RichText::new(&a.username).size(15.0).strong().color(TEXT));
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(&a.username).size(15.0).strong().color(TEXT));
+                                    if has_skin {
+                                        pill(ui, "✓ Có Skin riêng");
+                                    }
+                                });
                                 ui.label(RichText::new(a.kind_label()).size(12.0).color(if a.kind == AccountKind::Microsoft { GREEN_DARK } else { MUTED }));
                             });
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                 if ui.add(btn_danger("Xoá")).clicked() {
                                     remove = Some(a.id.clone());
+                                }
+                                if a.kind == AccountKind::Offline {
+                                    if has_skin && ui.add(btn_soft("Gỡ Skin")).clicked() {
+                                        clear_skin_for = Some(a.id.clone());
+                                    }
+                                    if ui.add(btn_soft("🎨 Đổi Skin (.png)")).clicked() {
+                                        pick_skin_for = Some((a.id.clone(), a.username.clone()));
+                                    }
                                 }
                                 if active {
                                     pill(ui, "Đang dùng");
@@ -1629,6 +2186,27 @@ impl App {
                         });
                     });
                 ui.add_space(6.0);
+            }
+            if let Some((acc_id, uname)) = pick_skin_for {
+                if let Some(src) = rfd::FileDialog::new().add_filter("Ảnh Skin Minecraft", &["png"]).pick_file() {
+                    let dest = auth::skins_dir().join(format!("{}.png", uname));
+                    if fs::copy(&src, &dest).is_ok() {
+                        if let Some(acc) = self.accounts.accounts.iter_mut().find(|x| x.id == acc_id) {
+                            acc.offline_skin = dest.to_string_lossy().to_string();
+                            self.avatar_cache.remove(&acc.id);
+                        }
+                        let _ = self.accounts.save();
+                        self.set_status(format!("Đã gắn Skin riêng cho {} (tự động nạp khi mở Fabric)!", uname));
+                    }
+                }
+            }
+            if let Some(acc_id) = clear_skin_for {
+                if let Some(acc) = self.accounts.accounts.iter_mut().find(|x| x.id == acc_id) {
+                    acc.offline_skin.clear();
+                    self.avatar_cache.remove(&acc.id);
+                }
+                let _ = self.accounts.save();
+                self.set_status("Đã gỡ Skin riêng.");
             }
             if let Some(id) = make_active {
                 self.accounts.active_id = Some(id);
@@ -1859,11 +2437,50 @@ impl App {
         });
         ui.add_space(12.0);
         card(ui, |ui| {
-            title(ui, "Giới thiệu");
-            ui.label(RichText::new("VN Launcher 2.0 · Phát triển bởi Nguyễn Trọng Việt Anh (Vanh)").size(13.5).strong().color(TEXT));
+            title(ui, "Giới thiệu & Cập nhật");
+            ui.label(RichText::new(format!("VN Launcher {} · Phát triển bởi Nguyễn Trọng Việt Anh (Vanh)", APP_VERSION)).size(13.5).strong().color(TEXT));
             hint(ui, "Mã nguồn mở (MIT) · Viết bằng Rust · Kho Mod, Resource Pack & Shader từ Modrinth.");
-            ui.add_space(4.0);
-            ui.hyperlink_to(RichText::new("🌐 GitHub chính chủ: github.com/vietanh-1208").size(13.0).strong(), "https://github.com/vietanh-1208");
+            ui.add_space(6.0);
+            let upd = self.update_state.lock().map(|u| u.clone()).unwrap_or(UpdateState::Idle);
+            ui.horizontal_wrapped(|ui| {
+                match upd {
+                    UpdateState::Checking => {
+                        ui.spinner();
+                        ui.label(RichText::new("Đang kiểm tra bản mới trên GitHub...").color(MUTED));
+                    }
+                    UpdateState::Downloading => {
+                        ui.spinner();
+                        ui.label(RichText::new("Đang tải bản cập nhật và tự cài lại...").color(GREEN_DARK));
+                    }
+                    UpdateState::Available { version, download_url } => {
+                        if ui.add(btn_primary(&format!("⬇ Cập nhật ngay lên v{}", version))).clicked() {
+                            start_self_update(download_url, Arc::clone(&self.update_state), Arc::clone(&self.status));
+                        }
+                        if ui.add(btn_soft("🔄 Kiểm tra lại")).clicked() {
+                            spawn_update_check(Arc::clone(&self.update_state), true);
+                        }
+                    }
+                    UpdateState::UpToDate => {
+                        if ui.add(btn_soft("🔄 Kiểm tra cập nhật")).clicked() {
+                            spawn_update_check(Arc::clone(&self.update_state), true);
+                        }
+                        pill(ui, &format!("✓ Đang dùng bản mới nhất (v{})", APP_VERSION));
+                    }
+                    UpdateState::Error(e) => {
+                        if ui.add(btn_soft("🔄 Thử kiểm tra lại")).clicked() {
+                            spawn_update_check(Arc::clone(&self.update_state), true);
+                        }
+                        hint(ui, &e);
+                    }
+                    UpdateState::Idle => {
+                        if ui.add(btn_soft("🔄 Kiểm tra & Cập nhật bản mới")).clicked() {
+                            spawn_update_check(Arc::clone(&self.update_state), true);
+                        }
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.hyperlink_to(RichText::new("🌐 GitHub chính chủ: github.com/vietanh-1208/vn-launcher").size(13.0).strong(), "https://github.com/vietanh-1208/vn-launcher");
         });
     }
 
@@ -1902,6 +2519,12 @@ impl App {
                     ui.label(RichText::new("Bộ nạp mod").color(MUTED));
                     ui.horizontal(|ui| {
                         ui.selectable_value(&mut self.new_loader, ModLoader::Fabric, "Fabric");
+                        if ui.selectable_value(&mut self.new_loader, ModLoader::NeoForge, "NeoForge").clicked() {
+                            self.new_install_fps = false;
+                        }
+                        if ui.selectable_value(&mut self.new_loader, ModLoader::Forge, "Forge").clicked() {
+                            self.new_install_fps = false;
+                        }
                         if ui.selectable_value(&mut self.new_loader, ModLoader::Vanilla, "Vanilla").clicked() {
                             self.new_install_fps = false;
                         }
@@ -2333,6 +2956,169 @@ Remove-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\vn-launch
     let _ = cmd.status();
 }
 
+fn ensure_avatar_texture(
+    cache: &mut std::collections::HashMap<String, egui::TextureHandle>,
+    ctx: &egui::Context,
+    acc: &Account,
+) -> egui::TextureId {
+    if let Some(tex) = cache.get(&acc.id) {
+        return tex.id();
+    }
+    let mut pixels = vec![0u8; 8 * 8 * 4];
+    let loaded = if !acc.offline_skin.trim().is_empty() {
+        image::open(acc.offline_skin.trim()).ok().map(|im| im.to_rgba8())
+    } else {
+        None
+    };
+    if let Some(rgba) = loaded {
+        let (w, h) = rgba.dimensions();
+        for y in 0..8u32 {
+            for x in 0..8u32 {
+                let base = if 8 + x < w && 8 + y < h { rgba.get_pixel(8 + x, 8 + y).0 } else { [180, 140, 110, 255] };
+                let hat = if 40 + x < w && 8 + y < h { rgba.get_pixel(40 + x, 8 + y).0 } else { [0, 0, 0, 0] };
+                let a = hat[3] as f32 / 255.0;
+                let idx = ((y * 8 + x) * 4) as usize;
+                for c in 0..3 {
+                    pixels[idx + c] = ((hat[c] as f32 * a) + (base[c] as f32 * (1.0 - a))).round() as u8;
+                }
+                pixels[idx + 3] = 255;
+            }
+        }
+    } else {
+        // Built-in crisp Emerald/Steve-inspired 8x8 avatar
+        for y in 0..8usize {
+            for x in 0..8usize {
+                let idx = (y * 8 + x) * 4;
+                let col = if y < 2 {
+                    [21, 128, 61, 255] // emerald hair
+                } else if (y == 4) && (x == 1 || x == 2 || x == 5 || x == 6) {
+                    if x == 2 || x == 5 { [22, 163, 74, 255] } else { [255, 255, 255, 255] } // eyes
+                } else if y == 6 && (2..=5).contains(&x) {
+                    [160, 102, 74, 255] // smile
+                } else {
+                    [235, 190, 155, 255] // skin
+                };
+                pixels[idx..idx + 4].copy_from_slice(&col);
+            }
+        }
+    }
+    let img = egui::ColorImage::from_rgba_unmultiplied([8, 8], &pixels);
+    let handle = ctx.load_texture(format!("avatar_{}", acc.id), img, egui::TextureOptions::NEAREST);
+    let id = handle.id();
+    cache.insert(acc.id.clone(), handle);
+    id
+}
+
+fn parse_semver(s: &str) -> (u32, u32, u32) {
+    let clean = s.trim().trim_start_matches('v').trim_start_matches('V');
+    let mut parts = clean.split('.').map(|p| p.parse::<u32>().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0), parts.next().unwrap_or(0))
+}
+
+fn spawn_update_check(state: Arc<Mutex<UpdateState>>, manual: bool) {
+    if manual {
+        if let Ok(mut s) = state.lock() {
+            *s = UpdateState::Checking;
+        }
+    }
+    thread::spawn(move || {
+        let Ok(client) = mojang::build_http_client(15) else {
+            if manual {
+                if let Ok(mut s) = state.lock() {
+                    *s = UpdateState::Error("Không tạo được kết nối mạng.".into());
+                }
+            }
+            return;
+        };
+        let resp = client
+            .get(GITHUB_LATEST_RELEASE_API)
+            .header("User-Agent", "VN-Launcher/2.0")
+            .header("Accept", "application/vnd.github+json")
+            .send();
+        let Ok(r) = resp else {
+            if manual {
+                if let Ok(mut s) = state.lock() {
+                    *s = UpdateState::Error("Không kết nối được GitHub để kiểm tra bản mới.".into());
+                }
+            }
+            return;
+        };
+        if !r.status().is_success() {
+            if manual {
+                if let Ok(mut s) = state.lock() {
+                    *s = UpdateState::Error(format!("GitHub trả về mã {}", r.status()));
+                }
+            }
+            return;
+        }
+        let Ok(json) = r.json::<serde_json::Value>() else { return };
+        let tag = json["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_string();
+        let dl_url = json["assets"]
+            .as_array()
+            .and_then(|arr| {
+                arr.iter()
+                    .find(|a| a["name"].as_str().unwrap_or("").to_lowercase().ends_with(".exe"))
+                    .and_then(|a| a["browser_download_url"].as_str())
+            })
+            .unwrap_or("")
+            .to_string();
+        if !tag.is_empty() && !dl_url.is_empty() && parse_semver(&tag) > parse_semver(APP_VERSION) {
+            if let Ok(mut s) = state.lock() {
+                *s = UpdateState::Available { version: tag, download_url: dl_url };
+            }
+        } else if manual {
+            if let Ok(mut s) = state.lock() {
+                *s = UpdateState::UpToDate;
+            }
+        }
+    });
+}
+
+fn start_self_update(url: String, state: Arc<Mutex<UpdateState>>, status: Arc<Mutex<String>>) {
+    if let Ok(mut s) = state.lock() {
+        *s = UpdateState::Downloading;
+    }
+    if let Ok(mut st) = status.lock() {
+        *st = "Đang tải bản cập nhật VN Launcher...".into();
+    }
+    thread::spawn(move || {
+        let res = (|| -> Result<(), String> {
+            let client = mojang::build_http_client(120)?;
+            let mut resp = client
+                .get(&url)
+                .header("User-Agent", "VN-Launcher/2.0")
+                .send()
+                .map_err(|e| e.to_string())?;
+            if !resp.status().is_success() {
+                return Err(format!("HTTP {}", resp.status()));
+            }
+            let tmp = std::env::temp_dir().join("vn-launcher-update.exe");
+            let mut file = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+            std::io::copy(&mut resp, &mut file).map_err(|e| e.to_string())?;
+            drop(file);
+
+            let install_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .unwrap_or_else(|| installed_app_exe_path().parent().unwrap().to_path_buf());
+            Command::new(&tmp)
+                .arg("/silent")
+                .arg(install_dir.to_string_lossy().to_string())
+                .spawn()
+                .map_err(|e| e.to_string())?;
+            std::process::exit(0);
+        })();
+        if let Err(e) = res {
+            if let Ok(mut s) = state.lock() {
+                *s = UpdateState::Error(format!("Lỗi tải cập nhật: {}", e));
+            }
+            if let Ok(mut st) = status.lock() {
+                *st = format!("Lỗi cập nhật: {}", e);
+            }
+        }
+    });
+}
+
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--uninstall") {
@@ -2448,6 +3234,7 @@ mod tests {
             uuid: acc.uuid.clone(),
             access_token: "0".into(),
             user_type: "legacy".into(),
+            offline_skin: String::new(),
         };
         let mut child = prepare_and_launch(&cfg, &vanilla_inst, &la, None, &status)
             .expect("Vanilla 1.21.11 should launch");

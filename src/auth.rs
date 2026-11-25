@@ -35,6 +35,8 @@ pub struct Account {
     pub access_token: String,
     #[serde(default)]
     pub expires_at: u64,
+    #[serde(default)]
+    pub offline_skin: String,
 }
 
 impl Account {
@@ -47,6 +49,7 @@ impl Account {
             refresh_token: String::new(),
             access_token: String::new(),
             expires_at: 0,
+            offline_skin: String::new(),
         }
     }
 
@@ -113,6 +116,15 @@ impl AccountStore {
             self.active_id = self.accounts.first().map(|a| a.id.clone());
         }
     }
+}
+
+pub fn skins_dir() -> PathBuf {
+    let dir = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("VNLauncher")
+        .join("skins");
+    let _ = fs::create_dir_all(&dir);
+    dir
 }
 
 pub fn now_secs() -> u64 {
@@ -303,6 +315,7 @@ pub fn minecraft_login(client: &Client, ms_access: &str, ms_refresh: &str) -> Re
         refresh_token: ms_refresh.to_string(),
         access_token: mc_token,
         expires_at: now_secs() + expires_in,
+        offline_skin: String::new(),
     })
 }
 
