@@ -78,6 +78,7 @@ pub const FPS_PACK: &[(&str, &str)] = &[
     ("iris", "Iris Shaders – Hỗ trợ chạy Shader mượt kèm Sodium"),
     ("appleskin", "AppleSkin – Hiển thị độ no & hồi máu của thức ăn"),
     ("inventoryhud", "Inventory HUD+ – Hiển thị giáp, túi đồ & độ bền trên màn hình"),
+    ("simple-voice-chat", "Simple Voice Chat – Nói chuyện bằng Mic trực tiếp trong game (phím V)"),
     ("modmenu", "Mod Menu – Danh sách & chỉnh cài đặt mod trong game"),
 ];
 /// Extra legacy optimization mods automatically included when installing on older MC versions (1.16.5..1.20.4)

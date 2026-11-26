@@ -855,7 +855,7 @@ impl eframe::App for App {
 impl App {
     fn bottom_bar(&mut self, ctx: &egui::Context, busy: bool, running: bool) {
         egui::TopBottomPanel::bottom("bottom")
-            .exact_height(74.0)
+            .min_height(82.0)
             .frame(
                 egui::Frame::none()
                     .fill(WHITE)
@@ -863,7 +863,7 @@ impl App {
                     .stroke(Stroke::new(1.0_f32, BORDER)),
             )
             .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
+                ui.horizontal(|ui| {
                     // Account switcher
                     ui.vertical(|ui| {
                         ui.label(RichText::new("Tài khoản").size(11.5).color(MUTED));
@@ -875,7 +875,7 @@ impl App {
                         let mut chosen: Option<String> = None;
                         egui::ComboBox::from_id_salt("acc_switch")
                             .selected_text(RichText::new(active_label).strong().color(TEXT))
-                            .width(220.0)
+                            .width(210.0)
                             .show_ui(ui, |ui| {
                                 for a in &self.accounts.accounts {
                                     let sel = self.accounts.active_id.as_deref() == Some(a.id.as_str());
@@ -896,20 +896,23 @@ impl App {
 
                     ui.add_space(16.0);
 
-                    // Status
-                    ui.vertical(|ui| {
+                    // Status (strictly bounded width so it wraps cleanly and never gets covered by the Play/Stop button)
+                    let reserve_right = if running { 265.0 } else { 210.0 };
+                    let status_w = (ui.available_width() - reserve_right).max(160.0);
+                    ui.allocate_ui_with_layout(Vec2::new(status_w, 58.0), Layout::top_down(Align::LEFT), |ui| {
+                        ui.set_max_width(status_w);
                         let inst_line = self
                             .selected()
                             .map(|i| format!("{}  ·  Minecraft {}  ·  {}", i.name, i.mc_version, i.loader.label()))
                             .unwrap_or_else(|| "Chưa chọn phiên bản".into());
-                        ui.label(RichText::new(inst_line).size(13.0).strong().color(TEXT));
+                        ui.add(egui::Label::new(RichText::new(inst_line).size(13.0).strong().color(TEXT)).wrap());
                         ui.horizontal(|ui| {
                             if busy {
                                 ui.spinner();
                             }
                             let msg = self.status.lock().map(|s| s.clone()).unwrap_or_default();
                             let color = if msg.starts_with("Lỗi") || msg.contains("bị lỗi") { RED } else { MUTED };
-                            ui.label(RichText::new(msg).size(12.5).color(color));
+                            ui.add(egui::Label::new(RichText::new(msg).size(12.5).color(color)).wrap());
                         });
                     });
 
@@ -1142,21 +1145,20 @@ impl App {
 
         let news_snap = self.news.lock().map(|n| n.clone()).unwrap_or_default();
         card(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(format!("📢 {}", news_snap.title)).size(15.0).strong().color(GREEN_DEEP));
-                    ui.label(RichText::new(&news_snap.message).size(12.5).color(TEXT));
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.hyperlink_to(RichText::new("💬 Discord").size(13.0).strong(), &news_snap.discord_url);
-                    if !news_snap.featured_server_ip.trim().is_empty()
-                        && ui
-                            .add_enabled(!busy, btn_primary(&format!("🎮 Vào {}", news_snap.featured_server_name)))
-                            .clicked()
-                    {
-                        quick_join_srv = Some(news_snap.featured_server_ip.clone());
-                    }
-                });
+            ui.label(RichText::new(format!("📢 {}", news_snap.title)).size(15.0).strong().color(GREEN_DEEP));
+            ui.add_space(2.0);
+            ui.add(egui::Label::new(RichText::new(&news_snap.message).size(12.5).color(TEXT)).wrap());
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if !news_snap.featured_server_ip.trim().is_empty()
+                    && ui
+                        .add_enabled(!busy, btn_primary(&format!("🎮 Vào {}", news_snap.featured_server_name)))
+                        .clicked()
+                {
+                    quick_join_srv = Some(news_snap.featured_server_ip.clone());
+                }
+                ui.add_space(6.0);
+                ui.hyperlink_to(RichText::new("💬 Tham gia Discord").size(13.0).strong(), &news_snap.discord_url);
             });
         });
         ui.add_space(12.0);
@@ -1667,22 +1669,23 @@ impl App {
             let mut dh_install = false;
 
             card(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("⚡ Bộ Mod Tối Ưu Chuẩn Java").size(16.0).strong().color(TEXT));
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("⚡ Bộ Mod Tối Ưu Chuẩn Java (kèm Mic)").size(16.0).strong().color(TEXT));
                     pill(ui, &format!("Đã có {}/{} mod", have_count, FPS_PACK.len()));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.add_enabled(!busy, btn_soft("🌄 Cài Distant Horizons (1024 chunk)")).clicked() {
-                            dh_install = true;
-                        }
-                        let btn_label = if have_count == FPS_PACK.len() {
-                            format!("✓ Đã cài đủ {} Mod Tối Ưu (Bấm để kiểm tra lại)", FPS_PACK.len())
-                        } else {
-                            format!("⚡ Cài trọn bộ {} Mod Tối Ưu (1-Click)", FPS_PACK.len())
-                        };
-                        if ui.add_enabled(!busy, btn_primary(&btn_label)).clicked() {
-                            pack_install = true;
-                        }
-                    });
+                });
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    let btn_label = if have_count == FPS_PACK.len() {
+                        format!("✓ Đã cài đủ {} Mod Tối Ưu (Bấm để kiểm tra lại)", FPS_PACK.len())
+                    } else {
+                        format!("⚡ Cài trọn bộ {} Mod Tối Ưu + Mic (1-Click)", FPS_PACK.len())
+                    };
+                    if ui.add_enabled(!busy, btn_primary(&btn_label)).clicked() {
+                        pack_install = true;
+                    }
+                    if ui.add_enabled(!busy, btn_soft("🌄 Cài Distant Horizons (1024 chunk)")).clicked() {
+                        dh_install = true;
+                    }
                 });
                 ui.add_space(4.0);
                 hint(

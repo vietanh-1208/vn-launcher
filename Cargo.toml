@@ -1,6 +1,6 @@
 [package]
 name = "vn-launcher"
-version = "2.1.1"
+version = "2.1.2"
 edition = "2021"
 authors = ["VN Launcher Open Source Community"]
 description = "VN Launcher - Open-source, ultra-optimized Minecraft: Java Edition Launcher written in Rust with 1024-chunk LOD preset & 1-click Modrinth mod manager"
