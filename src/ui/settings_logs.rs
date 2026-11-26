@@ -117,25 +117,27 @@ impl crate::App {
             }
             hint(ui, "Tài khoản và cấu hình được lưu trong %APPDATA%\\VNLauncher nên thư mục chứa file vn-launcher.exe luôn gọn sạch.");
         });
-        ui.add_space(12.0);
-        card(ui, |ui| {
-            title(ui, "Ứng dụng Windows (Start Menu & Desktop)");
-            let app_exe = installed_app_exe_path();
-            hint(ui, &format!("Vị trí cài đặt App: {}", app_exe.display()));
-            hint(ui, "Đã tích hợp vào Windows Start Menu, Windows Search (gõ \"VN Launcher\"), Desktop và danh sách Ứng dụng đã cài đặt.");
-            ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                if ui.add(btn_primary("📌 Tạo lại lối tắt Start Menu & Desktop")).clicked() {
-                    install_windows_app(APP_VERSION, true);
-                    self.set_status("Đã cài đặt App & tạo lối tắt VN Launcher trên Start Menu và Desktop.");
-                }
-                if ui.add(btn_soft("Mở thư mục cài App")).clicked() {
-                    if let Some(p) = app_exe.parent() {
-                        self.open_folder(p.to_path_buf());
+        if cfg!(windows) {
+            ui.add_space(12.0);
+            card(ui, |ui| {
+                title(ui, "Ứng dụng Windows (Start Menu & Desktop)");
+                let app_exe = installed_app_exe_path();
+                hint(ui, &format!("Vị trí cài đặt App: {}", app_exe.display()));
+                hint(ui, "Đã tích hợp vào Windows Start Menu, Windows Search (gõ \"VN Launcher\"), Desktop và danh sách Ứng dụng đã cài đặt.");
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    if ui.add(btn_primary("📌 Tạo lại lối tắt Start Menu & Desktop")).clicked() {
+                        install_windows_app(APP_VERSION, true);
+                        self.set_status("Đã cài đặt App & tạo lối tắt VN Launcher trên Start Menu và Desktop.");
                     }
-                }
+                    if ui.add(btn_soft("Mở thư mục cài App")).clicked() {
+                        if let Some(p) = app_exe.parent() {
+                            self.open_folder(p.to_path_buf());
+                        }
+                    }
+                });
             });
-        });
+        }
         ui.add_space(12.0);
         card(ui, |ui| {
             title(ui, "Giới thiệu & Cập nhật");

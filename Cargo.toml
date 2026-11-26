@@ -1,6 +1,6 @@
 [package]
 name = "vn-launcher"
-version = "2.3.0"
+version = "2.4.0"
 edition = "2021"
 authors = ["VN Launcher Open Source Community"]
 description = "VN Launcher - Open-source, ultra-optimized Minecraft: Java Edition Launcher written in Rust with 1024-chunk LOD preset & 1-click Modrinth mod manager"
@@ -17,9 +17,11 @@ md-5 = "0.10"
 rfd = "0.15"
 rayon = "1.10"
 dirs = "5.0"
-windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 sysinfo = { version = "0.33", default-features = false, features = ["system"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_SystemInformation"] }
 
 [profile.release]
 opt-level = 3

@@ -70,6 +70,46 @@ pub fn detect_hardware() -> HardwareInfo {
             }
         }
     }
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(out) = Command::new("sh")
+            .args(["-c", "lspci 2>/dev/null | grep -iE 'vga|3d|display'"])
+            .output()
+        {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            for line in raw.lines() {
+                let desc = line.split(':').last().unwrap_or(line).trim();
+                if !desc.is_empty() {
+                    let l = desc.to_lowercase();
+                    if l.contains("nvidia") || l.contains("geforce") || l.contains("rtx") || l.contains("gtx") || l.contains("radeon rx") {
+                        gpu_name = desc.to_string();
+                        has_dedicated_gpu = true;
+                        break;
+                    } else if gpu_name.is_empty() {
+                        gpu_name = desc.to_string();
+                    }
+                }
+            }
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(out) = Command::new("system_profiler")
+            .arg("SPDisplaysDataType")
+            .output()
+        {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            for line in raw.lines() {
+                let t = line.trim();
+                if let Some(val) = t.strip_prefix("Chipset Model:") {
+                    gpu_name = val.trim().to_string();
+                    let l = gpu_name.to_lowercase();
+                    has_dedicated_gpu = l.contains("apple m") || l.contains("radeon") || l.contains("pro");
+                    break;
+                }
+            }
+        }
+    }
 
     HardwareInfo {
         ram_mb,
@@ -139,6 +179,10 @@ pub fn build_jvm_args(
         EffectiveProfile::High => ram.min(2048),
     };
     let mut args = vec![format!("-Xmx{}M", ram), format!("-Xms{}M", xms)];
+    #[cfg(target_os = "macos")]
+    {
+        args.push("-XstartOnFirstThread".into());
+    }
 
     if instance.use_zgc && java_major >= 21 {
         args.push("-XX:+UseZGC".into());

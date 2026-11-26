@@ -138,12 +138,13 @@ pub fn prepare_and_launch(
     let mut args = build_jvm_args(instance, java_major, &vanilla.natives_dir, hw);
     args.extend(extra_jvm_args);
     args.push("-cp".into());
+    let cp_sep = if cfg!(windows) { ";" } else { ":" };
     args.push(
         classpath
             .iter()
             .map(|p| p.to_string_lossy().to_string())
             .collect::<Vec<_>>()
-            .join(";"),
+            .join(cp_sep),
     );
     args.push(main_class);
     args.extend([

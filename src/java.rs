@@ -46,7 +46,15 @@ pub fn recommended_java_major(mc_version: &str, json_major: Option<u32>) -> u32 
     }
 }
 
-/// Searches `runtimes_dir/java-<major>` for `bin/java.exe`
+fn java_bin_name() -> &'static str {
+    if cfg!(windows) {
+        "java.exe"
+    } else {
+        "java"
+    }
+}
+
+/// Searches `runtimes_dir/java-<major>` for `bin/java` (or `bin/java.exe` on Windows)
 pub fn find_installed_java(runtimes_dir: &Path, major: u32) -> Option<PathBuf> {
     let target_dir = runtimes_dir.join(format!("java-{}", major));
     if !target_dir.exists() {
@@ -56,17 +64,26 @@ pub fn find_installed_java(runtimes_dir: &Path, major: u32) -> Option<PathBuf> {
 }
 
 fn find_java_exe_recursive(dir: &Path) -> Option<PathBuf> {
-    let direct = dir.join("bin").join("java.exe");
+    let bin = java_bin_name();
+    let direct = dir.join("bin").join(bin);
     if direct.exists() {
         return Some(direct);
+    }
+    let mac_direct = dir.join("Contents").join("Home").join("bin").join(bin);
+    if mac_direct.exists() {
+        return Some(mac_direct);
     }
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                let candidate = path.join("bin").join("java.exe");
+                let candidate = path.join("bin").join(bin);
                 if candidate.exists() {
                     return Some(candidate);
+                }
+                let mac_candidate = path.join("Contents").join("Home").join("bin").join(bin);
+                if mac_candidate.exists() {
+                    return Some(mac_candidate);
                 }
             }
         }
@@ -102,9 +119,22 @@ pub fn ensure_java_runtime(
         ),
     );
 
+    let adoptium_os = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "mac"
+    } else {
+        "linux"
+    };
+    let adoptium_arch = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "x64"
+    };
+
     let api_url = format!(
-        "https://api.adoptium.net/v3/assets/latest/{}/hotspot?architecture=x64&image_type=jre&os=windows&vendor=eclipse",
-        major
+        "https://api.adoptium.net/v3/assets/latest/{}/hotspot?architecture={}&image_type=jre&os={}&vendor=eclipse",
+        major, adoptium_arch, adoptium_os
     );
 
     let resp = client
@@ -127,7 +157,7 @@ pub fn ensure_java_runtime(
 
     let first = assets
         .first()
-        .ok_or_else(|| format!("Không tìm thấy gói cài đặt Java {} cho Windows x64", major))?;
+        .ok_or_else(|| format!("Không tìm thấy gói cài đặt Java {} cho {} {}", major, adoptium_os, adoptium_arch))?;
 
     let download_url = &first.binary.package.link;
     let pkg_name = &first.binary.package.name;
@@ -137,27 +167,44 @@ pub fn ensure_java_runtime(
     fs::create_dir_all(&target_dir)
         .map_err(|e| format!("Không thể tạo thư mục lưu Java: {}", e))?;
 
-    let zip_path = target_dir.join(pkg_name);
+    let archive_path = target_dir.join(pkg_name);
 
     set_status(
         status_log,
         &format!("☕ Đang tải {} ({:.1} MB)...", pkg_name, total_size as f64 / 1_048_576.0),
     );
 
-    download_file_with_progress(client, download_url, &zip_path, total_size, status_log, &format!("Java {}", major))?;
+    download_file_with_progress(client, download_url, &archive_path, total_size, status_log, &format!("Java {}", major))?;
 
     set_status(
         status_log,
         &format!("📦 Đang giải nén Java {} vào thư mục Portable...", major),
     );
 
-    extract_zip(&zip_path, &target_dir)?;
-    let _ = fs::remove_file(&zip_path);
+    if pkg_name.ends_with(".tar.gz") || pkg_name.ends_with(".tgz") {
+        let out = std::process::Command::new("tar")
+            .arg("-xzf")
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&target_dir)
+            .output()
+            .map_err(|e| format!("Lỗi chạy tar giải nén Java: {}", e))?;
+        if !out.status.success() {
+            return Err(format!(
+                "Lỗi giải nén Java (.tar.gz): {}",
+                String::from_utf8_lossy(&out.stderr)
+            ));
+        }
+    } else {
+        extract_zip(&archive_path, &target_dir)?;
+    }
+    let _ = fs::remove_file(&archive_path);
 
     find_installed_java(runtimes_dir, major).ok_or_else(|| {
         format!(
-            "Đã giải nén Java {} nhưng không tìm thấy bin/java.exe",
-            major
+            "Đã giải nén Java {} nhưng không tìm thấy bin/{}",
+            major,
+            java_bin_name()
         )
     })
 }

@@ -387,6 +387,15 @@ pub fn total_ram_mb() -> u64 {
             return m.ullTotalPhys / (1024 * 1024);
         }
     }
+    #[cfg(not(windows))]
+    {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let mb = sys.total_memory() / (1024 * 1024);
+        if mb > 0 {
+            return mb;
+        }
+    }
     8192
 }
 

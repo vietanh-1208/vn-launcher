@@ -20,15 +20,19 @@ const VERSION_MANIFEST_URLS: &[&str] = &[
 
 /// Builds an HTTP client bound to IPv4 (`0.0.0.0`) so it never hangs or fails on broken ISP IPv6 (`AAAA`) routes.
 pub fn build_http_client(timeout_secs: u64) -> Result<Client, String> {
-    Client::builder()
-        .local_address(Some(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))
+    let mut builder = Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(timeout_secs))
         .pool_max_idle_per_host(32)
         .pool_idle_timeout(Duration::from_secs(60))
         .tcp_nodelay(true)
         .tcp_keepalive(Duration::from_secs(30))
-        .user_agent("VN-Launcher/2.3")
+        .user_agent("VN-Launcher/2.4");
+    #[cfg(windows)]
+    {
+        builder = builder.local_address(Some(IpAddr::V4(Ipv4Addr::UNSPECIFIED)));
+    }
+    builder
         .build()
         .map_err(|e| format!("Không khởi tạo được kết nối mạng: {}", e))
 }
@@ -223,21 +227,32 @@ pub fn fetch_text_with_fallback(client: &Client, url: &str) -> Result<String, St
     Err(last_err)
 }
 
-/// Evaluates Mojang OS rules for Windows
-pub fn is_library_allowed_on_windows(rules: &Option<Vec<OsRule>>) -> bool {
+pub fn current_mojang_os() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "osx"
+    } else {
+        "linux"
+    }
+}
+
+/// Evaluates Mojang OS rules for the current OS (Windows, Linux, macOS)
+pub fn is_library_allowed_on_current_os(rules: &Option<Vec<OsRule>>) -> bool {
     let Some(rule_list) = rules else {
         return true;
     };
     if rule_list.is_empty() {
         return true;
     }
+    let cur = current_mojang_os();
     let mut allowed = false;
     for rule in rule_list {
         let matches_os = match &rule.os {
             None => true,
             Some(os) => match &os.name {
                 None => true,
-                Some(name) => name == "windows",
+                Some(name) => name == cur,
             },
         };
         if matches_os {
@@ -245,6 +260,26 @@ pub fn is_library_allowed_on_windows(rules: &Option<Vec<OsRule>>) -> bool {
         }
     }
     allowed
+}
+
+fn classify_native_for_current_os(lib_name: &str) -> (bool, bool) {
+    if !lib_name.contains(":natives-") {
+        return (true, false);
+    }
+    if cfg!(target_os = "windows") {
+        let ok = lib_name.ends_with(":natives-windows");
+        (ok, ok)
+    } else if cfg!(target_os = "macos") {
+        let is_mac = lib_name.contains(":natives-macos") || lib_name.contains(":natives-osx");
+        let is_arm = lib_name.ends_with("-arm64");
+        let ok = is_mac && (cfg!(target_arch = "aarch64") || !is_arm);
+        (ok, ok)
+    } else {
+        let is_linux = lib_name.contains(":natives-linux");
+        let is_arm = lib_name.ends_with("-arm64");
+        let ok = is_linux && (cfg!(target_arch = "aarch64") == is_arm || !is_arm);
+        (ok, ok)
+    }
 }
 
 /// Converts Maven coordinates `group:artifact:version[:classifier]` to a relative path
@@ -352,16 +387,11 @@ pub fn ensure_vanilla_version(
     let mut classpath_jars = Vec::new();
 
     for lib in &version_info.libraries {
-        if !is_library_allowed_on_windows(&lib.rules) {
+        if !is_library_allowed_on_current_os(&lib.rules) {
             continue;
         }
-        // Skip 32-bit x86 and ARM64 native libraries on x86_64 Windows so they never overwrite 64-bit DLLs
-        if lib.name.ends_with(":natives-windows-x86")
-            || lib.name.ends_with(":natives-windows-arm64")
-            || lib.name.contains(":natives-linux")
-            || lib.name.contains(":natives-macos")
-            || lib.name.contains(":natives-osx")
-        {
+        let (native_allowed, is_native) = classify_native_for_current_os(&lib.name);
+        if !native_allowed {
             continue;
         }
         let ga = crate::fabric::extract_group_artifact(&lib.name);
@@ -374,7 +404,6 @@ pub fn ensure_vanilla_version(
                     .or_else(|| maven_coord_to_path(&lib.name))
                     .unwrap_or_else(|| format!("unknown/{}.jar", lib.name.replace(':', "_")));
                 let dest = libraries_dir.join(&rel_path);
-                let is_native = lib.name.ends_with(":natives-windows");
                 classpath_jars.push((ga.clone(), dest.clone()));
                 if !verify_file_sha1(&dest, artifact.sha1.as_deref()) {
                     tasks.push(DownloadTask {
@@ -388,17 +417,26 @@ pub fn ensure_vanilla_version(
                 }
             }
             if let Some(classifiers) = &downloads.classifiers {
-                if let Some(native_win) = classifiers.get("natives-windows") {
-                    let rel_path = native_win
+                let native_opt = if cfg!(target_os = "windows") {
+                    classifiers.get("natives-windows")
+                } else if cfg!(target_os = "macos") {
+                    classifiers
+                        .get("natives-macos")
+                        .or_else(|| classifiers.get("natives-osx"))
+                } else {
+                    classifiers.get("natives-linux")
+                };
+                if let Some(native_art) = native_opt {
+                    let rel_path = native_art
                         .path
                         .clone()
                         .unwrap_or_else(|| format!("natives/{}.jar", lib.name.replace(':', "_")));
                     let dest = libraries_dir.join(&rel_path);
-                    if !verify_file_sha1(&dest, native_win.sha1.as_deref()) {
+                    if !verify_file_sha1(&dest, native_art.sha1.as_deref()) {
                         tasks.push(DownloadTask {
-                            url: native_win.url.clone(),
+                            url: native_art.url.clone(),
                             dest,
-                            sha1: native_win.sha1.clone(),
+                            sha1: native_art.sha1.clone(),
                             is_native_zip: true,
                         });
                     } else {

@@ -4,7 +4,6 @@ use crate::LoginState;
 use eframe::egui::{self, Align, Layout, RichText, Rounding, Stroke, Vec2};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 impl crate::App {
     pub(crate) fn accounts_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -162,7 +161,7 @@ impl crate::App {
                                 ctx.output_mut(|o| o.copied_text = user_code.clone());
                             }
                             if ui.add(btn_soft("Mở lại trang")).clicked() {
-                                let _ = Command::new("rundll32").args(["url.dll,FileProtocolHandler", &uri]).spawn();
+                                open_url_in_browser(&uri);
                             }
                         });
                         ui.horizontal(|ui| {

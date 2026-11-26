@@ -1,8 +1,12 @@
+#[cfg(windows)]
 use std::fs;
 use std::path::PathBuf;
+#[cfg(windows)]
 use std::process::Command;
+#[cfg(windows)]
 use std::thread;
 
+#[allow(dead_code)]
 pub fn installed_app_exe_path() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -11,6 +15,7 @@ pub fn installed_app_exe_path() -> PathBuf {
         .join("VN Launcher.exe")
 }
 
+#[allow(dead_code)]
 pub fn start_menu_shortcut_path() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -23,6 +28,7 @@ pub fn start_menu_shortcut_path() -> PathBuf {
 
 /// Automatically installs VN Launcher into `%LOCALAPPDATA%\Programs\VN Launcher\VN Launcher.exe`,
 /// creates Start Menu & Desktop shortcuts, and registers in Windows Installed Apps & App Paths.
+#[cfg(windows)]
 pub fn install_windows_app(app_version: &str, force_shortcuts: bool) {
     let Ok(cur_exe) = std::env::current_exe() else { return };
     let target_exe = installed_app_exe_path();
@@ -95,6 +101,10 @@ foreach ($ap in @('VN Launcher.exe','vn-launcher.exe')) {{
     });
 }
 
+#[cfg(not(windows))]
+pub fn install_windows_app(_app_version: &str, _force_shortcuts: bool) {}
+
+#[cfg(windows)]
 pub fn uninstall_windows_app() {
     let start_lnk = start_menu_shortcut_path();
     let _ = fs::remove_file(start_lnk);
@@ -114,3 +124,6 @@ Remove-Item 'HKCU:\Software\Microsoft\Windows\CurrentVersion\App Paths\vn-launch
     }
     let _ = cmd.status();
 }
+
+#[cfg(not(windows))]
+pub fn uninstall_windows_app() {}

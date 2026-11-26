@@ -25,7 +25,7 @@ use std::collections::VecDeque;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::Child;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -317,8 +317,7 @@ impl App {
     }
 
     pub(crate) fn open_folder(&self, path: PathBuf) {
-        let _ = fs::create_dir_all(&path);
-        let _ = Command::new("explorer").arg(path).spawn();
+        open_path_in_file_manager(&path);
     }
 
     pub(crate) fn save(&self) {
@@ -642,7 +641,7 @@ impl App {
                 Err(e) => return set(LoginState::Error(e)),
             };
             let link = format!("https://www.microsoft.com/link?otc={}", dc.user_code);
-            let _ = Command::new("rundll32").args(["url.dll,FileProtocolHandler", &link]).spawn();
+            open_url_in_browser(&link);
             set(LoginState::ShowCode { user_code: dc.user_code.clone(), uri: dc.verification_uri.clone() });
 
             let mut interval = dc.interval.max(2);
@@ -1263,7 +1262,12 @@ impl App {
                                 save = true;
                             }
                             if ui.add(btn_soft("Chọn...")).clicked() {
-                                if let Some(p) = rfd::FileDialog::new().add_filter("java.exe", &["exe"]).pick_file() {
+                                let dialog = if cfg!(windows) {
+                                    rfd::FileDialog::new().add_filter("java.exe", &["exe"])
+                                } else {
+                                    rfd::FileDialog::new()
+                                };
+                                if let Some(p) = dialog.pick_file() {
                                     inst.java_path = p.to_string_lossy().to_string();
                                     save = true;
                                 }
@@ -1419,6 +1423,7 @@ fn main() -> eframe::Result<()> {
 mod tests {
     use super::*;
     use crate::config::{max_ram_mb, recommended_ram_mb, total_ram_mb};
+    use std::process::Command;
 
     fn setup_test_data_junctions(cfg: &LauncherConfig) {
         let base = cfg.base_data_dir();

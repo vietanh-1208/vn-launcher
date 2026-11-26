@@ -104,46 +104,61 @@ pub fn spawn_update_check(state: Arc<Mutex<UpdateState>>, manual: bool) {
 }
 
 pub fn start_self_update(url: String, state: Arc<Mutex<UpdateState>>, status: Arc<Mutex<String>>) {
-    if let Ok(mut s) = state.lock() {
-        *s = UpdateState::Downloading;
-    }
-    if let Ok(mut st) = status.lock() {
-        *st = "Đang tải bản cập nhật VN Launcher...".into();
-    }
-    thread::spawn(move || {
-        let res = (|| -> Result<(), String> {
-            let client = mojang::build_http_client(120)?;
-            let mut resp = client
-                .get(&url)
-                .header("User-Agent", "VN-Launcher/2.0")
-                .send()
-                .map_err(|e| e.to_string())?;
-            if !resp.status().is_success() {
-                return Err(format!("HTTP {}", resp.status()));
-            }
-            let tmp = std::env::temp_dir().join("vn-launcher-update.exe");
-            let mut file = fs::File::create(&tmp).map_err(|e| e.to_string())?;
-            std::io::copy(&mut resp, &mut file).map_err(|e| e.to_string())?;
-            drop(file);
-
-            let install_dir = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-                .unwrap_or_else(|| installed_app_exe_path().parent().unwrap().to_path_buf());
-            Command::new(&tmp)
-                .arg("/silent")
-                .arg(install_dir.to_string_lossy().to_string())
-                .spawn()
-                .map_err(|e| e.to_string())?;
-            std::process::exit(0);
-        })();
-        if let Err(e) = res {
-            if let Ok(mut s) = state.lock() {
-                *s = UpdateState::Error(format!("Lỗi tải cập nhật: {}", e));
-            }
-            if let Ok(mut st) = status.lock() {
-                *st = format!("Lỗi cập nhật: {}", e);
-            }
+    #[cfg(not(windows))]
+    {
+        let _ = url;
+        crate::ui::open_url_in_browser("https://github.com/vietanh-1208/vn-launcher/releases/latest");
+        if let Ok(mut st) = status.lock() {
+            *st = "Đã mở trang tải bản cập nhật mới trên trình duyệt.".into();
         }
-    });
+        if let Ok(mut s) = state.lock() {
+            *s = UpdateState::Idle;
+        }
+        return;
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(mut s) = state.lock() {
+            *s = UpdateState::Downloading;
+        }
+        if let Ok(mut st) = status.lock() {
+            *st = "Đang tải bản cập nhật VN Launcher...".into();
+        }
+        thread::spawn(move || {
+            let res = (|| -> Result<(), String> {
+                let client = mojang::build_http_client(120)?;
+                let mut resp = client
+                    .get(&url)
+                    .header("User-Agent", "VN-Launcher/2.0")
+                    .send()
+                    .map_err(|e| e.to_string())?;
+                if !resp.status().is_success() {
+                    return Err(format!("HTTP {}", resp.status()));
+                }
+                let tmp = std::env::temp_dir().join("vn-launcher-update.exe");
+                let mut file = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+                std::io::copy(&mut resp, &mut file).map_err(|e| e.to_string())?;
+                drop(file);
+
+                let install_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                    .unwrap_or_else(|| installed_app_exe_path().parent().unwrap().to_path_buf());
+                Command::new(&tmp)
+                    .arg("/silent")
+                    .arg(install_dir.to_string_lossy().to_string())
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
+                std::process::exit(0);
+            })();
+            if let Err(e) = res {
+                if let Ok(mut s) = state.lock() {
+                    *s = UpdateState::Error(format!("Lỗi tải cập nhật: {}", e));
+                }
+                if let Ok(mut st) = status.lock() {
+                    *st = format!("Lỗi cập nhật: {}", e);
+                }
+            }
+        });
+    }
 }
