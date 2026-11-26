@@ -1,8 +1,10 @@
 pub mod optimizer_ui;
+pub mod tabs;
 
+use crate::auth::Account;
 use eframe::egui::{
-    self, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, Pos2, RichText,
-    Rounding, Stroke, Vec2,
+    self, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, IconData, Pos2,
+    RichText, Rounding, Stroke, Vec2,
 };
 use std::fs;
 
@@ -193,4 +195,163 @@ pub fn setup_theme(ctx: &egui::Context) {
     v.window_shadow.color = Color32::from_black_alpha(35);
     style.visuals = v;
     ctx.set_style(style);
+}
+
+/// High-contrast 64x64 "VN" Emerald-Block icon for the window & taskbar
+pub fn make_icon() -> IconData {
+    let (w, h) = (64u32, 64u32);
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    let mut blend = |x: i32, y: i32, c: [u8; 4], alpha: f32| {
+        if x >= 0 && y >= 0 && (x as u32) < w && (y as u32) < h && alpha > 0.0 {
+            let a = (alpha.clamp(0.0, 1.0) * (c[3] as f32 / 255.0)).clamp(0.0, 1.0);
+            let i = ((y as u32 * w + x as u32) * 4) as usize;
+            let dst_a = rgba[i + 3] as f32 / 255.0;
+            let out_a = a + dst_a * (1.0 - a);
+            if out_a > 0.0 {
+                for ch in 0..3 {
+                    let src_c = c[ch] as f32 / 255.0;
+                    let dst_c = rgba[i + ch] as f32 / 255.0;
+                    let out_c = (src_c * a + dst_c * dst_a * (1.0 - a)) / out_a;
+                    rgba[i + ch] = (out_c * 255.0).round() as u8;
+                }
+                rgba[i + 3] = (out_a * 255.0).round() as u8;
+            }
+        }
+    };
+    let r = 15.0_f32;
+    for y in 0..h as i32 {
+        for x in 0..w as i32 {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            let cx = fx.clamp(r, w as f32 - r);
+            let cy = fy.clamp(r, h as f32 - r);
+            let d = ((fx - cx).powi(2) + (fy - cy).powi(2)).sqrt();
+            if d <= r + 0.8 {
+                let cov = (r + 0.5 - d).clamp(0.0, 1.0);
+                let t = fy / h as f32;
+                let bg = [
+                    (18.0 + 10.0 * (1.0 - t)) as u8,
+                    (95.0 + 68.0 * (1.0 - t)) as u8,
+                    (48.0 + 34.0 * (1.0 - t)) as u8,
+                    255,
+                ];
+                blend(x, y, bg, cov);
+                let grass_h = 12.0 + ((x / 4) % 3) as f32 * 2.5;
+                if fy < grass_h && d <= r - 2.0 {
+                    blend(x, y, [74, 222, 128, 95], cov);
+                }
+                let edge = (r - d).min(fx).min(fy).min(w as f32 - fx).min(h as f32 - fy);
+                if edge < 3.2 {
+                    let rim = if fy < 24.0 { [134, 239, 172, 255] } else { [34, 197, 94, 255] };
+                    blend(x, y, rim, cov * (1.0 - (edge / 3.2).clamp(0.0, 1.0) * 0.4));
+                }
+            }
+        }
+    }
+    let mut stroke = |x0: f32, y0: f32, x1: f32, y1: f32, t: f32, c: [u8; 4]| {
+        let min_x = (x0.min(x1) - t).floor() as i32;
+        let max_x = (x0.max(x1) + t).ceil() as i32;
+        let min_y = (y0.min(y1) - t).floor() as i32;
+        let max_y = (y0.max(y1) + t).ceil() as i32;
+        let dx = x1 - x0;
+        let dy = y1 - y0;
+        let len2 = (dx * dx + dy * dy).max(0.001);
+        let rad = t * 0.5;
+        for py in min_y..=max_y {
+            for px in min_x..=max_x {
+                let fx = px as f32 + 0.5;
+                let fy = py as f32 + 0.5;
+                let proj = (((fx - x0) * dx + (fy - y0) * dy) / len2).clamp(0.0, 1.0);
+                let nx = x0 + proj * dx;
+                let ny = y0 + proj * dy;
+                let dist = ((fx - nx).powi(2) + (fy - ny).powi(2)).sqrt();
+                if dist <= rad + 0.8 {
+                    blend(px, py, c, (rad + 0.5 - dist).clamp(0.0, 1.0));
+                }
+            }
+        }
+    };
+    let shadow = [10, 42, 22, 190];
+    let white = [255, 255, 255, 255];
+    let mint = [110, 245, 158, 255];
+    for (ax, ay, bx, by) in [
+        (11.0, 19.0, 19.5, 47.0),
+        (19.5, 47.0, 28.0, 19.0),
+        (35.0, 47.0, 35.0, 19.0),
+        (35.0, 19.0, 51.0, 47.0),
+        (51.0, 47.0, 51.0, 19.0),
+    ] {
+        stroke(ax + 1.5, ay + 2.0, bx + 1.5, by + 2.0, 6.2, shadow);
+    }
+    stroke(11.0, 19.0, 19.5, 47.0, 6.0, white);
+    stroke(19.5, 47.0, 28.0, 19.0, 6.0, white);
+    stroke(35.0, 47.0, 35.0, 19.0, 6.0, mint);
+    stroke(35.0, 19.0, 51.0, 47.0, 5.8, white);
+    stroke(51.0, 47.0, 51.0, 19.0, 6.0, mint);
+    IconData { rgba, width: w, height: h }
+}
+
+pub fn ensure_avatar_texture(
+    cache: &mut std::collections::HashMap<String, egui::TextureHandle>,
+    ctx: &egui::Context,
+    acc: &Account,
+) -> egui::TextureId {
+    if let Some(tex) = cache.get(&acc.id) {
+        return tex.id();
+    }
+    let mut pixels = vec![0u8; 8 * 8 * 4];
+    let loaded = if !acc.offline_skin.trim().is_empty() {
+        image::open(acc.offline_skin.trim()).ok().map(|im| im.to_rgba8())
+    } else {
+        None
+    };
+    if let Some(rgba) = loaded {
+        let (w, h) = rgba.dimensions();
+        for y in 0..8u32 {
+            for x in 0..8u32 {
+                let base = if 8 + x < w && 8 + y < h {
+                    rgba.get_pixel(8 + x, 8 + y).0
+                } else {
+                    [180, 140, 110, 255]
+                };
+                let hat = if 40 + x < w && 8 + y < h {
+                    rgba.get_pixel(40 + x, 8 + y).0
+                } else {
+                    [0, 0, 0, 0]
+                };
+                let a = hat[3] as f32 / 255.0;
+                let idx = ((y * 8 + x) * 4) as usize;
+                for c in 0..3 {
+                    pixels[idx + c] =
+                        ((hat[c] as f32 * a) + (base[c] as f32 * (1.0 - a))).round() as u8;
+                }
+                pixels[idx + 3] = 255;
+            }
+        }
+    } else {
+        for y in 0..8usize {
+            for x in 0..8usize {
+                let idx = (y * 8 + x) * 4;
+                let col = if y < 2 {
+                    [21, 128, 61, 255]
+                } else if (y == 4) && (x == 1 || x == 2 || x == 5 || x == 6) {
+                    if x == 2 || x == 5 {
+                        [22, 163, 74, 255]
+                    } else {
+                        [255, 255, 255, 255]
+                    }
+                } else if y == 6 && (2..=5).contains(&x) {
+                    [160, 102, 74, 255]
+                } else {
+                    [235, 190, 155, 255]
+                };
+                pixels[idx..idx + 4].copy_from_slice(&col);
+            }
+        }
+    }
+    let img = egui::ColorImage::from_rgba_unmultiplied([8, 8], &pixels);
+    let handle = ctx.load_texture(format!("avatar_{}", acc.id), img, egui::TextureOptions::NEAREST);
+    let id = handle.id();
+    cache.insert(acc.id.clone(), handle);
+    id
 }
