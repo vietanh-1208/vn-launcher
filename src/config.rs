@@ -412,3 +412,14 @@ pub fn max_ram_mb() -> u32 {
     let total = total_ram_mb() as u32;
     total.saturating_sub(2560).max(1536)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_ram_bounds() {
+        assert!(max_ram_mb() >= 1536);
+        assert!(recommended_ram_mb() <= max_ram_mb());
+    }
+}

@@ -1,5 +1,9 @@
+pub mod accounts;
+pub mod content;
+pub mod dialogs;
 pub mod optimizer_ui;
-pub mod tabs;
+pub mod settings_logs;
+pub mod worlds_servers;
 
 use crate::auth::Account;
 use eframe::egui::{

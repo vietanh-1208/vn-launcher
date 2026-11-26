@@ -14,8 +14,8 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("Nguyễn Trọng Việt Anh (Vanh)")]
 [assembly: AssemblyProduct("VN Launcher")]
 [assembly: AssemblyCopyright("Copyright © 2026 Nguyễn Trọng Việt Anh (Vanh)")]
-[assembly: AssemblyVersion("2.2.0.0")]
-[assembly: AssemblyFileVersion("2.2.0.0")]
+[assembly: AssemblyVersion("2.3.0.0")]
+[assembly: AssemblyFileVersion("2.3.0.0")]
 
 namespace VNLauncherSetup
 {
@@ -597,7 +597,7 @@ namespace VNLauncherSetup
                 {
                     using (RegistryKey k = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\VNLauncher"))
                     {
-                        if (k != null) k.SetValue("DisplayVersion", "2.2.0");
+                        if (k != null) k.SetValue("DisplayVersion", "2.3.0");
                     }
                 }
                 catch { }

@@ -529,3 +529,78 @@ pub fn backup_world_zip(world_dir: &Path, dest_zip: &Path) -> Result<(), String>
     zip.finish().map_err(|e| e.to_string())?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{InstanceConfig, ModLoader, OptimizationProfile};
+
+    #[test]
+    fn test_resolve_profile_tiers() {
+        let low_hw = HardwareInfo {
+            ram_mb: 4096,
+            cpu_name: "Intel Celeron".into(),
+            cpu_threads: 4,
+            gpu_name: "Intel UHD Graphics".into(),
+            has_dedicated_gpu: false,
+        };
+        let mid_hw = HardwareInfo {
+            ram_mb: 8192,
+            cpu_name: "Intel Core 5 205H".into(),
+            cpu_threads: 12,
+            gpu_name: "NVIDIA GeForce RTX 3050 Laptop GPU".into(),
+            has_dedicated_gpu: true,
+        };
+        let high_hw = HardwareInfo {
+            ram_mb: 16384,
+            cpu_name: "Ryzen 7".into(),
+            cpu_threads: 16,
+            gpu_name: "NVIDIA GeForce RTX 4070".into(),
+            has_dedicated_gpu: true,
+        };
+
+        assert_eq!(resolve_profile(OptimizationProfile::Auto, &low_hw), EffectiveProfile::Low);
+        assert_eq!(resolve_profile(OptimizationProfile::Auto, &mid_hw), EffectiveProfile::Balanced);
+        assert_eq!(resolve_profile(OptimizationProfile::Auto, &high_hw), EffectiveProfile::High);
+        assert_eq!(resolve_profile(OptimizationProfile::High, &low_hw), EffectiveProfile::High);
+        assert_eq!(resolve_profile(OptimizationProfile::Low, &high_hw), EffectiveProfile::Low);
+    }
+
+    #[test]
+    fn test_build_jvm_args_profiles() {
+        let natives = std::env::temp_dir().join("vn_test_natives");
+        let mut inst = InstanceConfig::new("Test", "1.21.4", ModLoader::Fabric);
+
+        inst.optimization_profile = OptimizationProfile::Low;
+        let low_hw = HardwareInfo { ram_mb: 4096, ..Default::default() };
+        let low_args = build_jvm_args(&inst, 21, &natives, &low_hw);
+        assert!(low_args.iter().any(|a| a == "-XX:MaxGCPauseMillis=50"));
+        assert!(!low_args.iter().any(|a| a == "-XX:+AlwaysPreTouch"));
+
+        inst.optimization_profile = OptimizationProfile::High;
+        let high_hw = HardwareInfo { ram_mb: 16384, has_dedicated_gpu: true, ..Default::default() };
+        let high_args = build_jvm_args(&inst, 21, &natives, &high_hw);
+        assert!(high_args.iter().any(|a| a == "-XX:MaxGCPauseMillis=30"));
+        assert!(high_args.iter().any(|a| a == "-XX:+AlwaysPreTouch"));
+    }
+
+    #[test]
+    fn test_non_destructive_bobby_override() {
+        let dir = std::env::temp_dir().join("vn_test_bobby_preserve");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("mods")).unwrap();
+        fs::write(dir.join("mods").join("bobby-5.2.0.jar"), b"dummy").unwrap();
+        fs::write(dir.join("options.txt"), "renderDistance:64\nsimulationDistance:12\n").unwrap();
+
+        let low_hw = HardwareInfo { ram_mb: 4096, ..Default::default() };
+        let eff = optimize_graphics_options(&dir, OptimizationProfile::Low, &low_hw).unwrap();
+        assert_eq!(eff, EffectiveProfile::Low);
+
+        let updated = fs::read_to_string(dir.join("options.txt")).unwrap();
+        assert!(updated.contains("renderDistance:64"), "Bobby renderDistance must not be lowered");
+        assert!(updated.contains("particles:2"));
+        assert!(updated.contains("entityShadows:false"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

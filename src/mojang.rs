@@ -24,8 +24,11 @@ pub fn build_http_client(timeout_secs: u64) -> Result<Client, String> {
         .local_address(Some(IpAddr::V4(Ipv4Addr::UNSPECIFIED)))
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(timeout_secs))
+        .pool_max_idle_per_host(32)
+        .pool_idle_timeout(Duration::from_secs(60))
+        .tcp_nodelay(true)
         .tcp_keepalive(Duration::from_secs(30))
-        .user_agent("VN-Launcher/1.0")
+        .user_agent("VN-Launcher/2.3")
         .build()
         .map_err(|e| format!("Không khởi tạo được kết nối mạng: {}", e))
 }
@@ -420,31 +423,42 @@ pub fn ensure_vanilla_version(
         }
     }
 
+    let io_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(24)
+        .build()
+        .ok();
+
     if !tasks.is_empty() {
         let total_libs = tasks.len();
         let done_libs = AtomicUsize::new(0);
         set_status(
             status_log,
-            &format!("📚 Đang tải đa luồng {} thư viện Minecraft...", total_libs),
+            &format!("📚 Đang tải tốc độ cao {} thư viện Minecraft...", total_libs),
         );
 
-        let errors: Vec<String> = tasks
-            .par_iter()
-            .filter_map(|task| {
-                let res = download_file_verified(client, &task.url, &task.dest, task.sha1.as_deref());
-                if res.is_ok() && task.is_native_zip {
-                    let _ = extract_native_jar(&task.dest, &natives_dir);
-                }
-                let finished = done_libs.fetch_add(1, Ordering::Relaxed) + 1;
-                if finished % 5 == 0 || finished == total_libs {
-                    set_status(
-                        status_log,
-                        &format!("📚 Đang tải thư viện: {}/{}", finished, total_libs),
-                    );
-                }
-                res.err()
-            })
-            .collect();
+        let run_libs = || -> Vec<String> {
+            tasks
+                .par_iter()
+                .filter_map(|task| {
+                    let res = download_file_verified(client, &task.url, &task.dest, task.sha1.as_deref());
+                    if res.is_ok() && task.is_native_zip {
+                        let _ = extract_native_jar(&task.dest, &natives_dir);
+                    }
+                    let finished = done_libs.fetch_add(1, Ordering::Relaxed) + 1;
+                    if finished % 5 == 0 || finished == total_libs {
+                        set_status(
+                            status_log,
+                            &format!("📚 Đang tải thư viện: {}/{}", finished, total_libs),
+                        );
+                    }
+                    res.err()
+                })
+                .collect()
+        };
+        let errors = match &io_pool {
+            Some(pool) => pool.install(run_libs),
+            None => run_libs(),
+        };
 
         if let Some(first_err) = errors.first() {
             return Err(format!("Lỗi tải thư viện Minecraft: {}", first_err));
@@ -493,27 +507,44 @@ pub fn ensure_vanilla_version(
     missing_assets.dedup_by(|a, b| a.1 == b.1);
 
     if !missing_assets.is_empty() {
+        // Pre-create 2-char hex subdirectories once so 24 worker threads skip redundant create_dir_all syscalls
+        let mut prefixes: Vec<&str> = missing_assets
+            .iter()
+            .filter_map(|(_, p)| p.parent().and_then(|d| d.file_name()).and_then(|n| n.to_str()))
+            .collect();
+        prefixes.sort_unstable();
+        prefixes.dedup();
+        for p in prefixes {
+            let _ = fs::create_dir_all(objects_dir.join(p));
+        }
+
         let total_assets = missing_assets.len();
         let done_assets = AtomicUsize::new(0);
         set_status(
             status_log,
-            &format!("🎨 Đang tải đa luồng {} tài nguyên âm thanh & hình ảnh...", total_assets),
+            &format!("🎨 Đang tải tốc độ cao {} tài nguyên âm thanh & hình ảnh...", total_assets),
         );
 
-        let asset_errors: Vec<String> = missing_assets
-            .par_iter()
-            .filter_map(|(url, dest)| {
-                let res = download_file_verified(client, url, dest, None);
-                let finished = done_assets.fetch_add(1, Ordering::Relaxed) + 1;
-                if finished % 50 == 0 || finished == total_assets {
-                    set_status(
-                        status_log,
-                        &format!("🎨 Đang tải tài nguyên (Assets): {}/{}", finished, total_assets),
-                    );
-                }
-                res.err()
-            })
-            .collect();
+        let run_assets = || -> Vec<String> {
+            missing_assets
+                .par_iter()
+                .filter_map(|(url, dest)| {
+                    let res = download_file_verified(client, url, dest, None);
+                    let finished = done_assets.fetch_add(1, Ordering::Relaxed) + 1;
+                    if finished % 50 == 0 || finished == total_assets {
+                        set_status(
+                            status_log,
+                            &format!("🎨 Đang tải tài nguyên (Assets): {}/{}", finished, total_assets),
+                        );
+                    }
+                    res.err()
+                })
+                .collect()
+        };
+        let asset_errors = match &io_pool {
+            Some(pool) => pool.install(run_assets),
+            None => run_assets(),
+        };
 
         if let Some(first_err) = asset_errors.first() {
             return Err(format!("Lỗi tải tài nguyên Minecraft: {}", first_err));
@@ -562,27 +593,29 @@ pub fn download_file_verified(
     expected_sha1: Option<&str>,
 ) -> Result<(), String> {
     if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        if !parent.exists() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
     }
 
     let mirror_url = mirror_mojang_url(url);
     for attempt in 1..=4 {
-        let target_url = if attempt >= 3 {
+        let target_url = if attempt % 2 == 0 {
             mirror_url.as_deref().unwrap_or(url)
         } else {
             url
         };
         let resp_res = client
             .get(target_url)
-            .header("User-Agent", "VN-Launcher/1.0")
-            .timeout(Duration::from_secs(120))
+            .header("User-Agent", "VN-Launcher/2.3")
+            .timeout(Duration::from_secs(90))
             .send();
 
         match resp_res {
             Ok(mut resp) if resp.status().is_success() => {
                 let tmp_path = dest.with_extension("part");
                 let mut file = File::create(&tmp_path).map_err(|e| e.to_string())?;
-                let mut buf = [0u8; 32768];
+                let mut buf = [0u8; 65536];
                 let mut copy_ok = true;
                 loop {
                     match resp.read(&mut buf) {

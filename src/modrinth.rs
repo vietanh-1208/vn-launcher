@@ -464,28 +464,56 @@ pub fn install_mod_list(
     game_dir: &Path,
     status: &Arc<Mutex<String>>,
 ) -> (Vec<String>, Vec<String>) {
-    let mut ok = Vec::new();
-    let mut failed = Vec::new();
-    for (slug, label) in slugs {
-        set_status(status, &format!("Đang cài {}...", label));
-        match install_project(client, ContentKind::Mod, slug, mc_version, game_dir, status) {
-            Ok(_) => ok.push(label.to_string()),
-            Err(_) => failed.push(label.to_string()),
-        }
-    }
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut all_targets: Vec<(&str, &str)> = slugs.to_vec();
     // For older Minecraft versions (1.16..1.20.4), automatically pull Indium/LazyDFU/Starlight if available
-    if mc_version.starts_with("1.16")
+    let is_legacy = mc_version.starts_with("1.16")
         || mc_version.starts_with("1.17")
         || mc_version.starts_with("1.18")
         || mc_version.starts_with("1.19")
         || mc_version.starts_with("1.20.1")
         || mc_version.starts_with("1.20.2")
-        || mc_version.starts_with("1.20.4")
-    {
-        for (slug, label) in LEGACY_EXTRA_MODS {
-            if install_project(client, ContentKind::Mod, slug, mc_version, game_dir, status).is_ok() {
-                ok.push(label.to_string());
-            }
+        || mc_version.starts_with("1.20.4");
+    if is_legacy {
+        all_targets.extend_from_slice(LEGACY_EXTRA_MODS);
+    }
+
+    let total = all_targets.len();
+    let done = AtomicUsize::new(0);
+    set_status(status, &format!("⚡ Đang tải song song {} mod tối ưu...", total));
+
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(6).build().ok();
+    let run = || -> Vec<(String, bool, bool)> {
+        all_targets
+            .par_iter()
+            .enumerate()
+            .map(|(idx, (slug, label))| {
+                let is_optional_legacy = idx >= slugs.len();
+                let res = install_project(client, ContentKind::Mod, slug, mc_version, game_dir, status);
+                let finished = done.fetch_add(1, Ordering::Relaxed) + 1;
+                set_status(
+                    status,
+                    &format!("⚡ Đang cài mod tối ưu ({}/{}): {}...", finished, total, label),
+                );
+                (label.to_string(), res.is_ok(), is_optional_legacy)
+            })
+            .collect()
+    };
+
+    let results = match &pool {
+        Some(p) => p.install(run),
+        None => run(),
+    };
+
+    let mut ok = Vec::new();
+    let mut failed = Vec::new();
+    for (label, success, is_optional_legacy) in results {
+        if success {
+            ok.push(label);
+        } else if !is_optional_legacy {
+            failed.push(label);
         }
     }
     (ok, failed)
