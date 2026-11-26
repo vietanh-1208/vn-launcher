@@ -6,6 +6,7 @@ use crate::modrinth::{has_mod, install_project, ContentKind};
 use crate::mojang::{build_http_client, ensure_vanilla_version};
 use crate::optimizer::{
     apply_offline_skin, build_jvm_args, ensure_high_perf_gpu, patch_bobby, patch_distant_horizons, prepare_game_dir,
+    HardwareInfo,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -37,6 +38,7 @@ pub fn prepare_and_launch(
     instance: &InstanceConfig,
     account: &LaunchAccount,
     override_server: Option<String>,
+    hw: &HardwareInfo,
     status: &Arc<Mutex<String>>,
 ) -> Result<Child, String> {
     let client = build_http_client(120)?;
@@ -133,7 +135,7 @@ pub fn prepare_and_launch(
         }
     }
 
-    let mut args = build_jvm_args(instance, java_major, &vanilla.natives_dir);
+    let mut args = build_jvm_args(instance, java_major, &vanilla.natives_dir, hw);
     args.extend(extra_jvm_args);
     args.push("-cp".into());
     args.push(

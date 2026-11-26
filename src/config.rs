@@ -3,6 +3,26 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum OptimizationProfile {
+    #[default]
+    Auto,
+    Low,
+    Balanced,
+    High,
+}
+
+impl OptimizationProfile {
+    pub fn label(&self) -> &'static str {
+        match self {
+            OptimizationProfile::Auto => "Tự động theo máy",
+            OptimizationProfile::Low => "Máy yếu (Potato PC)",
+            OptimizationProfile::Balanced => "Tầm trung (Balanced)",
+            OptimizationProfile::High => "Máy khỏe (High-End)",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModLoader {
     Vanilla,
@@ -80,6 +100,8 @@ pub struct InstanceConfig {
     /// Optional custom directory where this version's game files are stored
     #[serde(default)]
     pub custom_game_dir: String,
+    #[serde(default)]
+    pub optimization_profile: OptimizationProfile,
 }
 
 pub fn make_readable_folder_id(name: &str, mc_version: &str, loader: ModLoader) -> String {
@@ -127,6 +149,7 @@ impl InstanceConfig {
             window_height: default_height(),
             fullscreen: false,
             custom_game_dir: String::new(),
+            optimization_profile: OptimizationProfile::Auto,
         }
     }
 }
@@ -387,9 +410,5 @@ pub fn recommended_ram_mb() -> u32 {
 
 pub fn max_ram_mb() -> u32 {
     let total = total_ram_mb() as u32;
-    if total <= 4_600 {
-        total.saturating_sub(1536).max(1536)
-    } else {
-        total.saturating_sub(2048).max(2048)
-    }
+    total.saturating_sub(2560).max(1536)
 }

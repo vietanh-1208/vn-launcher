@@ -1,13 +1,143 @@
-use crate::config::{total_ram_mb, InstanceConfig};
+use crate::config::{total_ram_mb, InstanceConfig, OptimizationProfile};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-/// JVM arguments tuned for a smooth client (Aikar-style G1GC; optional ZGC on Java 21+).
-/// No AlwaysPreTouch / huge -Xms: on 8 GB laptops these force Windows to swap and cause stutter.
-pub fn build_jvm_args(instance: &InstanceConfig, java_major: u32, natives_dir: &Path) -> Vec<String> {
+#[derive(Debug, Clone)]
+pub struct HardwareInfo {
+    pub ram_mb: u64,
+    pub cpu_name: String,
+    pub cpu_threads: usize,
+    pub gpu_name: String,
+    pub has_dedicated_gpu: bool,
+}
+
+impl Default for HardwareInfo {
+    fn default() -> Self {
+        let ram_mb = total_ram_mb();
+        let cpu_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        Self {
+            ram_mb,
+            cpu_name: "Đang nhận diện CPU...".into(),
+            cpu_threads,
+            gpu_name: "Đang nhận diện GPU...".into(),
+            has_dedicated_gpu: false,
+        }
+    }
+}
+
+/// Detects CPU, RAM, and GPU on a background thread without blocking the UI.
+pub fn detect_hardware() -> HardwareInfo {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    sys.refresh_cpu_list(sysinfo::CpuRefreshKind::everything());
+
+    let ram_mb = (sys.total_memory() / (1024 * 1024)).max(total_ram_mb());
+    let cpu_threads = sys.cpus().len().max(1);
+    let cpu_name = sys
+        .cpus()
+        .first()
+        .map(|c| c.brand().trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "CPU x64".into());
+
+    let mut gpu_name = "Integrated Graphics".to_string();
+    let mut has_dedicated_gpu = false;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        if let Ok(out) = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                "(Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name) -join '|'",
+            ])
+            .creation_flags(0x0800_0000)
+            .output()
+        {
+            let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let gpus: Vec<&str> = raw.split('|').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+            if let Some(dgpu) = gpus.iter().find(|g| {
+                let l = g.to_lowercase();
+                l.contains("nvidia") || l.contains("geforce") || l.contains("rtx") || l.contains("gtx") || l.contains("radeon rx")
+            }) {
+                gpu_name = (*dgpu).to_string();
+                has_dedicated_gpu = true;
+            } else if let Some(first) = gpus.first() {
+                gpu_name = (*first).to_string();
+            }
+        }
+    }
+
+    HardwareInfo {
+        ram_mb,
+        cpu_name,
+        cpu_threads,
+        gpu_name,
+        has_dedicated_gpu,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectiveProfile {
+    Low,
+    Balanced,
+    High,
+}
+
+impl EffectiveProfile {
+    pub fn label(&self) -> &'static str {
+        match self {
+            EffectiveProfile::Low => "Máy yếu (Potato PC)",
+            EffectiveProfile::Balanced => "Tầm trung (Balanced)",
+            EffectiveProfile::High => "Máy khỏe (High-End)",
+        }
+    }
+}
+
+pub fn resolve_profile(profile: OptimizationProfile, hw: &HardwareInfo) -> EffectiveProfile {
+    match profile {
+        OptimizationProfile::Low => EffectiveProfile::Low,
+        OptimizationProfile::Balanced => EffectiveProfile::Balanced,
+        OptimizationProfile::High => EffectiveProfile::High,
+        OptimizationProfile::Auto => {
+            if hw.ram_mb <= 6_400 || hw.cpu_threads <= 4 {
+                EffectiveProfile::Low
+            } else if hw.ram_mb >= 15_360 && hw.has_dedicated_gpu {
+                EffectiveProfile::High
+            } else {
+                EffectiveProfile::Balanced
+            }
+        }
+    }
+}
+
+pub fn recommended_ram_for_profile(eff: EffectiveProfile, hw: &HardwareInfo) -> u32 {
+    let max_safe = (hw.ram_mb as u32).saturating_sub(2560).max(1536);
+    let target = match eff {
+        EffectiveProfile::Low => 2048.min(max_safe),
+        EffectiveProfile::Balanced => 3584.min(max_safe),
+        EffectiveProfile::High => 6144.min(max_safe),
+    };
+    target.max(1536)
+}
+
+/// JVM arguments tuned per hardware tier (Low / Balanced / High).
+pub fn build_jvm_args(
+    instance: &InstanceConfig,
+    java_major: u32,
+    natives_dir: &Path,
+    hw: &HardwareInfo,
+) -> Vec<String> {
     let ram = instance.ram_mb.max(1024);
-    let xms = ram.min(1024);
+    let eff = resolve_profile(instance.optimization_profile, hw);
+    let xms = match eff {
+        EffectiveProfile::Low => ram.min(512),
+        EffectiveProfile::Balanced => ram.min(1024),
+        EffectiveProfile::High => ram.min(2048),
+    };
     let mut args = vec![format!("-Xmx{}M", ram), format!("-Xms{}M", xms)];
 
     if instance.use_zgc && java_major >= 21 {
@@ -16,28 +146,49 @@ pub fn build_jvm_args(instance: &InstanceConfig, java_major: u32, natives_dir: &
             args.push("-XX:+ZGenerational".into());
         }
     } else {
-        for a in [
-            "-XX:+UseG1GC",
-            "-XX:+ParallelRefProcEnabled",
-            "-XX:MaxGCPauseMillis=200",
-            "-XX:+UnlockExperimentalVMOptions",
-            "-XX:+DisableExplicitGC",
-            "-XX:G1NewSizePercent=30",
-            "-XX:G1MaxNewSizePercent=40",
-            "-XX:G1HeapRegionSize=8M",
-            "-XX:G1ReservePercent=20",
-            "-XX:G1HeapWastePercent=5",
-            "-XX:G1MixedGCCountTarget=4",
-            "-XX:InitiatingHeapOccupancyPercent=15",
-            "-XX:G1MixedGCLiveThresholdPercent=90",
-            "-XX:G1RSetUpdatingPauseTimePercent=5",
-            "-XX:SurvivorRatio=32",
-            "-XX:+PerfDisableSharedMem",
-            "-XX:MaxTenuringThreshold=1",
-            "-XX:+AlwaysActAsServerClassMachine",
-            "-XX:+UseStringDeduplication",
-        ] {
-            args.push(a.into());
+        let tier_flags: &[&str] = match eff {
+            EffectiveProfile::Low => &[
+                "-XX:+UseG1GC",
+                "-XX:MaxGCPauseMillis=50",
+                "-XX:+UnlockExperimentalVMOptions",
+                "-XX:+DisableExplicitGC",
+                "-XX:G1HeapWastePercent=5",
+                "-XX:+AlwaysActAsServerClassMachine",
+                "-XX:+UseStringDeduplication",
+            ],
+            EffectiveProfile::Balanced => &[
+                "-XX:+UseG1GC",
+                "-XX:+UnlockExperimentalVMOptions",
+                "-XX:+DisableExplicitGC",
+                "-XX:G1NewSizePercent=20",
+                "-XX:G1ReservePercent=20",
+                "-XX:G1HeapRegionSize=8M",
+                "-XX:MaxGCPauseMillis=100",
+                "-XX:+PerfDisableSharedMem",
+                "-XX:+AlwaysActAsServerClassMachine",
+                "-XX:+UseStringDeduplication",
+            ],
+            EffectiveProfile::High => &[
+                "-XX:+UseG1GC",
+                "-XX:+ParallelRefProcEnabled",
+                "-XX:MaxGCPauseMillis=30",
+                "-XX:+UnlockExperimentalVMOptions",
+                "-XX:+DisableExplicitGC",
+                "-XX:G1NewSizePercent=30",
+                "-XX:G1MaxNewSizePercent=40",
+                "-XX:G1HeapRegionSize=8M",
+                "-XX:G1ReservePercent=20",
+                "-XX:G1HeapWastePercent=5",
+                "-XX:+PerfDisableSharedMem",
+                "-XX:+AlwaysActAsServerClassMachine",
+                "-XX:+UseStringDeduplication",
+            ],
+        };
+        for a in tier_flags {
+            args.push((*a).into());
+        }
+        if eff == EffectiveProfile::High && hw.ram_mb >= 15_360 {
+            args.push("-XX:+AlwaysPreTouch".into());
         }
     }
     if java_major >= 21 {
@@ -48,7 +199,7 @@ pub fn build_jvm_args(instance: &InstanceConfig, java_major: u32, natives_dir: &
     args.push(format!("-Djava.library.path={}", natives));
     args.push(format!("-Dorg.lwjgl.librarypath={}", natives));
     args.push("-Dminecraft.launcher.brand=VN-Launcher-by-Vanh".into());
-    args.push("-Dminecraft.launcher.version=2.0.0".into());
+    args.push("-Dminecraft.launcher.version=2.2.0".into());
 
     for part in instance.custom_jvm_args.split_whitespace() {
         args.push(part.to_string());
@@ -84,15 +235,31 @@ pub fn prepare_game_dir(game_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Applies Max-FPS / Low-End graphics settings to `options.txt` in-place,
-/// preserving the user's language, keybinds, sound, and other non-graphics settings.
-pub fn optimize_graphics_options(game_dir: &Path, weak_pc: bool) -> Result<(), String> {
+/// Applies tiered graphics settings (`Low` / `Balanced` / `High`) to `options.txt` in-place.
+/// Non-destructive: if the user installed Bobby or Distant Horizons (or set renderDistance higher on High-End),
+/// existing `renderDistance` is preserved and never lowered.
+pub fn optimize_graphics_options(
+    game_dir: &Path,
+    profile: OptimizationProfile,
+    hw: &HardwareInfo,
+) -> Result<EffectiveProfile, String> {
     fs::create_dir_all(game_dir).map_err(|e| e.to_string())?;
+    let eff = resolve_profile(profile, hw);
     let options = game_dir.join("options.txt");
     let existing = fs::read_to_string(&options).unwrap_or_default();
 
-    let presets: &[(&str, &str)] = if weak_pc {
-        &[
+    let has_view_mod = fs::read_dir(game_dir.join("mods"))
+        .ok()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|e| {
+            let n = e.file_name().to_string_lossy().to_lowercase();
+            n.contains("bobby") || n.contains("distanthorizons") || n.contains("distant-horizons")
+        });
+
+    let presets: &[(&str, &str)] = match eff {
+        EffectiveProfile::Low => &[
             ("renderDistance", "6"),
             ("simulationDistance", "5"),
             ("enableVsync", "false"),
@@ -105,29 +272,52 @@ pub fn optimize_graphics_options(game_dir: &Path, weak_pc: bool) -> Result<(), S
             ("ao", "0"),
             ("mipmapLevels", "0"),
             ("particles", "2"),
-        ]
-    } else {
-        &[
-            ("renderDistance", "8"),
-            ("simulationDistance", "6"),
+        ],
+        EffectiveProfile::Balanced => &[
+            ("renderDistance", "12"),
+            ("simulationDistance", "8"),
             ("enableVsync", "false"),
             ("maxFps", "260"),
-            ("graphicsMode", "0"),
-            ("renderClouds", "\"false\""),
+            ("graphicsMode", "1"),
+            ("renderClouds", "\"fast\""),
             ("entityDistanceScaling", "0.75"),
-            ("entityShadows", "false"),
-            ("biomeBlendRadius", "0"),
+            ("entityShadows", "true"),
+            ("biomeBlendRadius", "1"),
+            ("mipmapLevels", "2"),
             ("particles", "1"),
-        ]
+        ],
+        EffectiveProfile::High => &[
+            ("renderDistance", "16"),
+            ("simulationDistance", "12"),
+            ("enableVsync", "false"),
+            ("maxFps", "260"),
+            ("graphicsMode", "1"),
+            ("renderClouds", "\"fancy\""),
+            ("entityDistanceScaling", "1.0"),
+            ("entityShadows", "true"),
+            ("biomeBlendRadius", "2"),
+            ("mipmapLevels", "4"),
+            ("particles", "0"),
+        ],
     };
 
     let mut seen = vec![false; presets.len()];
     let mut lines: Vec<String> = Vec::new();
     for raw_line in existing.lines() {
         let mut replaced = false;
-        if let Some((k, _)) = raw_line.split_once(':') {
+        if let Some((k, v)) = raw_line.split_once(':') {
             for (idx, (pk, pv)) in presets.iter().enumerate() {
                 if k == *pk {
+                    if k == "renderDistance" {
+                        let cur_rd = v.trim().parse::<u32>().unwrap_or(0);
+                        let target_rd = pv.parse::<u32>().unwrap_or(12);
+                        if (has_view_mod && cur_rd >= 12) || (eff == EffectiveProfile::High && cur_rd > target_rd) {
+                            lines.push(raw_line.to_string());
+                            seen[idx] = true;
+                            replaced = true;
+                            break;
+                        }
+                    }
                     lines.push(format!("{}:{}", pk, pv));
                     seen[idx] = true;
                     replaced = true;
@@ -147,7 +337,8 @@ pub fn optimize_graphics_options(game_dir: &Path, weak_pc: bool) -> Result<(), S
             lines.push(format!("{}:{}", pk, pv));
         }
     }
-    fs::write(&options, lines.join("\n") + "\n").map_err(|e| e.to_string())
+    fs::write(&options, lines.join("\n") + "\n").map_err(|e| e.to_string())?;
+    Ok(eff)
 }
 
 /// Registers the Java executable to use High Performance GPU in Windows Graphics Preferences.

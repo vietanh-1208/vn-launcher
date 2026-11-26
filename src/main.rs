@@ -9,12 +9,12 @@ mod modloader;
 mod modrinth;
 mod mojang;
 mod optimizer;
+mod ui;
 
 use auth::{Account, AccountKind, AccountStore, PollResult};
 use config::{max_ram_mb, recommended_ram_mb, total_ram_mb, InstanceConfig, LauncherConfig, ModLoader, ServerEntry};
 use eframe::egui::{
-    self, Align, Align2, Color32, FontData, FontDefinitions, FontFamily, FontId, IconData, Layout, Pos2, RichText,
-    Rounding, Stroke, Vec2,
+    self, Align, Align2, Color32, IconData, Layout, RichText, Rounding, Stroke, Vec2,
 };
 use java::{ensure_java_runtime, find_installed_java};
 use launcher::{prepare_and_launch, LaunchAccount};
@@ -28,23 +28,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-
-// ---------- White & green palette ----------
-const GREEN: Color32 = Color32::from_rgb(22, 163, 74); // #16A34A
-const GREEN_DARK: Color32 = Color32::from_rgb(21, 128, 61); // #15803D
-const GREEN_DEEP: Color32 = Color32::from_rgb(20, 83, 45); // #14532D
-const GREEN_BRIGHT: Color32 = Color32::from_rgb(74, 222, 128); // #4ADE80
-const GREEN_SOFT: Color32 = Color32::from_rgb(220, 252, 231); // #DCFCE7
-const GREEN_MIST: Color32 = Color32::from_rgb(240, 253, 244); // #F0FDF4
-const BG: Color32 = Color32::from_rgb(244, 250, 246);
-const WHITE: Color32 = Color32::WHITE;
-const BORDER: Color32 = Color32::from_rgb(209, 231, 219);
-const TEXT: Color32 = Color32::from_rgb(17, 38, 29);
-const MUTED: Color32 = Color32::from_rgb(91, 112, 101);
-const RED: Color32 = Color32::from_rgb(220, 38, 38);
-const RED_SOFT: Color32 = Color32::from_rgb(254, 226, 226);
-const AMBER_SOFT: Color32 = Color32::from_rgb(254, 243, 199);
-const AMBER_TEXT: Color32 = Color32::from_rgb(146, 64, 14);
+use ui::*;
 
 const POPULAR_VERSIONS: &[&str] = &[
     "26.3", "26.2", "1.21.11", "1.21.4", "1.21.3", "1.21.1", "1.20.6", "1.20.4", "1.20.1", "1.19.4", "1.19.2",
@@ -166,6 +150,7 @@ struct App {
     famous_shaders: Arc<Mutex<Vec<FamousMod>>>,
     server_pings: Arc<Mutex<std::collections::HashMap<String, Option<u128>>>>,
     news: Arc<Mutex<NewsInfo>>,
+    hardware: Arc<Mutex<optimizer::HardwareInfo>>,
     avatar_cache: std::collections::HashMap<String, egui::TextureHandle>,
 }
 
@@ -266,6 +251,16 @@ impl App {
                 }
             });
         }
+        let hardware = Arc::new(Mutex::new(optimizer::HardwareInfo::default()));
+        {
+            let hardware = Arc::clone(&hardware);
+            thread::spawn(move || {
+                let hw = optimizer::detect_hardware();
+                if let Ok(mut guard) = hardware.lock() {
+                    *guard = hw;
+                }
+            });
+        }
         Self {
             config,
             accounts,
@@ -302,6 +297,7 @@ impl App {
             famous_shaders,
             server_pings: Arc::new(Mutex::new(std::collections::HashMap::new())),
             news,
+            hardware,
             avatar_cache: std::collections::HashMap::new(),
         }
     }
@@ -358,6 +354,7 @@ impl App {
         }
 
         let cfg = self.config.clone();
+        let hw = self.hardware.lock().map(|h| h.clone()).unwrap_or_default();
         let busy = Arc::clone(&self.busy);
         let status = Arc::clone(&self.status);
         let child_slot = Arc::clone(&self.game_child);
@@ -402,7 +399,7 @@ impl App {
                         offline_skin: String::new(),
                     },
                 };
-                prepare_and_launch(&cfg, &instance, &la, server, &status)
+                prepare_and_launch(&cfg, &instance, &la, server, &hw, &status)
             })();
 
             match result {
@@ -684,90 +681,6 @@ impl App {
             }
         });
     }
-}
-
-// =====================================================================
-// UI building blocks
-// =====================================================================
-fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    egui::Frame::none()
-        .fill(WHITE)
-        .rounding(Rounding::same(14.0))
-        .inner_margin(egui::Margin::same(18.0))
-        .stroke(Stroke::new(1.0_f32, BORDER))
-        .shadow(egui::epaint::Shadow { offset: Vec2::new(0.0, 2.0), blur: 8.0, spread: 0.0, color: Color32::from_black_alpha(10) })
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            add(ui)
-        })
-        .inner
-}
-
-fn title(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).size(17.0).strong().color(TEXT));
-}
-
-fn hint(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).size(12.5).color(MUTED));
-}
-
-fn btn_primary(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_string()).strong().color(WHITE))
-        .fill(GREEN)
-        .stroke(Stroke::NONE)
-        .rounding(Rounding::same(8.0))
-        .min_size(Vec2::new(0.0, 32.0))
-}
-
-fn btn_soft(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_string()).color(GREEN_DARK))
-        .fill(GREEN_SOFT)
-        .stroke(Stroke::NONE)
-        .rounding(Rounding::same(8.0))
-        .min_size(Vec2::new(0.0, 30.0))
-}
-
-fn btn_danger(text: &str) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.to_string()).color(RED))
-        .fill(RED_SOFT)
-        .stroke(Stroke::NONE)
-        .rounding(Rounding::same(8.0))
-        .min_size(Vec2::new(0.0, 30.0))
-}
-
-fn notice(ui: &mut egui::Ui, text: &str) {
-    egui::Frame::none()
-        .fill(AMBER_SOFT)
-        .rounding(Rounding::same(8.0))
-        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(text).size(12.5).color(AMBER_TEXT));
-        });
-}
-
-fn pill(ui: &mut egui::Ui, text: &str) {
-    egui::Frame::none()
-        .fill(GREEN_SOFT)
-        .rounding(Rounding::same(20.0))
-        .inner_margin(egui::Margin::symmetric(10.0, 3.0))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).size(12.0).color(GREEN_DARK));
-        });
-}
-
-fn draw_logo(ui: &mut egui::Ui, size: f32) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
-    let p = ui.painter();
-    p.rect_filled(rect, Rounding::same(size * 0.26), GREEN_DEEP);
-    p.rect_stroke(rect.shrink(2.5), Rounding::same(size * 0.22), Stroke::new(1.0_f32, Color32::from_white_alpha(70)));
-    let r = size * 0.05;
-    p.circle_filled(Pos2::new(rect.right() - size * 0.17, rect.top() + size * 0.17), r, GREEN_BRIGHT);
-    p.circle_filled(Pos2::new(rect.left() + size * 0.17, rect.bottom() - size * 0.17), r, WHITE);
-    let c = rect.center();
-    let f = FontId::proportional(size * 0.46);
-    p.text(Pos2::new(c.x - size * 0.14, c.y), Align2::CENTER_CENTER, "V", f.clone(), WHITE);
-    p.text(Pos2::new(c.x + size * 0.15, c.y), Align2::CENTER_CENTER, "N", f, GREEN_BRIGHT);
 }
 
 // =====================================================================
@@ -1086,9 +999,7 @@ impl App {
         let mut optimize_gfx = false;
         let mut ask_delete = false;
         let mut quick_join_srv: Option<String> = None;
-        let total_ram = total_ram_mb();
-        let rec_ram = recommended_ram_mb();
-        let max_ram = max_ram_mb();
+        let hw = self.hardware.lock().map(|h| h.clone()).unwrap_or_default();
         let show_snap_before = self.config.show_snapshots;
         let mut show_snap = show_snap_before;
 
@@ -1265,59 +1176,24 @@ impl App {
         ui.add_space(14.0);
 
         // Performance
-        card(ui, |ui| {
-            title(ui, "Hiệu năng");
-            hint(ui, &format!("Máy bạn có {:.1} GB RAM. Mức khuyên dùng cho Minecraft: {:.1} GB.", total_ram as f32 / 1024.0, rec_ram as f32 / 1024.0));
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("RAM cho game: {:.1} GB", inst.ram_mb as f32 / 1024.0)).color(TEXT));
-                if ui
-                    .add(egui::Slider::new(&mut inst.ram_mb, 1024..=max_ram).step_by(512.0).show_value(false))
-                    .changed()
-                {
-                    save = true;
-                }
-                if inst.ram_mb != rec_ram && ui.add(btn_soft("Dùng mức khuyên dùng")).clicked() {
-                    inst.ram_mb = rec_ram;
-                    save = true;
-                }
-            });
-            if inst.ram_mb > rec_ram {
-                notice(ui, "Cấp quá nhiều RAM khiến Windows thiếu bộ nhớ và game giật hơn. Hãy dùng mức khuyên dùng.");
-            }
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Cửa sổ game").color(TEXT));
-                if ui.checkbox(&mut inst.fullscreen, "Toàn màn hình").changed() {
-                    save = true;
-                }
-                if !inst.fullscreen {
-                    if ui.add(egui::DragValue::new(&mut inst.window_width).range(640..=7680).suffix(" px")).changed() {
-                        save = true;
-                    }
-                    ui.label("×");
-                    if ui.add(egui::DragValue::new(&mut inst.window_height).range(480..=4320).suffix(" px")).changed() {
-                        save = true;
-                    }
-                }
-            });
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.add_enabled(!busy, btn_primary("⚡ Tự động tối ưu đồ hoạ (Max FPS / Máy yếu)")).clicked() {
-                    optimize_gfx = true;
-                }
-                hint(ui, "Áp dụng cho cả bản gốc Vanilla (không cần mod): Đồ hoạ Nhanh, tắt bóng/sương/hạt thừa.");
-            });
-            if inst.loader == ModLoader::Fabric && !has_sodium {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    hint(ui, "Muốn FPS cao hơn? Cài gói tăng FPS (Sodium, Lithium, FerriteCore...). Không bắt buộc.");
-                    if ui.add_enabled(!busy, btn_soft("Cài gói tăng FPS")).clicked() {
-                        install_fps = true;
-                    }
-                });
-            }
-        });
+        let perf = ui::optimizer_ui::render_performance_card(
+            ui,
+            inst,
+            &hw,
+            busy,
+            has_sodium,
+            has_bobby,
+            has_dh,
+        );
+        if perf.save {
+            save = true;
+        }
+        if perf.optimize_gfx {
+            optimize_gfx = true;
+        }
+        if perf.install_fps {
+            install_fps = true;
+        }
         ui.add_space(14.0);
 
         // View distance / Bobby & DH (NOT auto-installed; shown with Download button)
@@ -1478,13 +1354,18 @@ impl App {
             self.install_pack(FPS_PACK, "Bộ 22 Mod Tối Ưu Ultra FPS");
         }
         if optimize_gfx {
-            let weak = total_ram <= 4_600;
-            match optimizer::optimize_graphics_options(&gd, weak) {
-                Ok(_) => self.set_status(if weak {
-                    "Đã tự động tối ưu đồ hoạ mức Máy yếu (6 đoạn, Đồ hoạ Nhanh)!"
-                } else {
-                    "Đã tự động tối ưu đồ hoạ Max FPS (8 đoạn, Đồ hoạ Nhanh, tắt hiệu ứng nặng)!"
-                }),
+            let profile = self
+                .config
+                .instances
+                .iter()
+                .find(|i| i.id == id)
+                .map(|i| i.optimization_profile)
+                .unwrap_or_default();
+            match optimizer::optimize_graphics_options(&gd, profile, &hw) {
+                Ok(eff) => self.set_status(format!(
+                    "Đã tự động tối ưu đồ hoạ theo hồ sơ {}!",
+                    eff.label()
+                )),
                 Err(e) => self.set_status(format!("Không chỉnh được options.txt: {}", e)),
             }
         }
@@ -2681,75 +2562,6 @@ fn fmt_count(n: u64) -> String {
 // =====================================================================
 // Theme, fonts, icon
 // =====================================================================
-fn setup_fonts(ctx: &egui::Context) {
-    let mut fonts = FontDefinitions::default();
-    for path in ["C:\\Windows\\Fonts\\segoeui.ttf", "C:\\Windows\\Fonts\\tahoma.ttf", "C:\\Windows\\Fonts\\arial.ttf"] {
-        if let Ok(bytes) = fs::read(path) {
-            fonts.font_data.insert("vn".into(), FontData::from_owned(bytes));
-            if let Some(f) = fonts.families.get_mut(&FontFamily::Proportional) {
-                f.insert(0, "vn".into());
-            }
-            if let Some(f) = fonts.families.get_mut(&FontFamily::Monospace) {
-                f.push("vn".into());
-            }
-            break;
-        }
-    }
-    if let Ok(bytes) = fs::read("C:\\Windows\\Fonts\\segoeuib.ttf") {
-        fonts.font_data.insert("vn_bold".into(), FontData::from_owned(bytes));
-    }
-    ctx.set_fonts(fonts);
-}
-
-fn setup_theme(ctx: &egui::Context) {
-    let mut style = (*ctx.style()).clone();
-    style.spacing.item_spacing = Vec2::new(10.0, 8.0);
-    style.spacing.button_padding = Vec2::new(14.0, 6.0);
-    style.spacing.interact_size.y = 28.0;
-    style.spacing.slider_width = 260.0;
-
-    let mut v = egui::Visuals::light();
-    v.panel_fill = BG;
-    v.window_fill = WHITE;
-    v.window_stroke = Stroke::new(1.0_f32, BORDER);
-    v.extreme_bg_color = WHITE;
-    v.faint_bg_color = GREEN_MIST;
-    v.override_text_color = None;
-    v.hyperlink_color = GREEN_DARK;
-
-    v.widgets.noninteractive.bg_fill = WHITE;
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER);
-    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT);
-
-    v.widgets.inactive.bg_fill = GREEN_MIST;
-    v.widgets.inactive.weak_bg_fill = GREEN_MIST;
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
-    v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, TEXT);
-    v.widgets.inactive.rounding = Rounding::same(8.0);
-
-    v.widgets.hovered.bg_fill = GREEN_SOFT;
-    v.widgets.hovered.weak_bg_fill = GREEN_SOFT;
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, GREEN);
-    v.widgets.hovered.fg_stroke = Stroke::new(1.5_f32, GREEN_DEEP);
-    v.widgets.hovered.rounding = Rounding::same(8.0);
-
-    v.widgets.active.bg_fill = GREEN_SOFT;
-    v.widgets.active.weak_bg_fill = GREEN_SOFT;
-    v.widgets.active.bg_stroke = Stroke::new(1.5_f32, GREEN_DARK);
-    v.widgets.active.fg_stroke = Stroke::new(1.5_f32, GREEN_DEEP);
-    v.widgets.active.rounding = Rounding::same(8.0);
-
-    v.widgets.open.bg_fill = GREEN_SOFT;
-    v.widgets.open.weak_bg_fill = GREEN_SOFT;
-    v.widgets.open.fg_stroke = Stroke::new(1.0_f32, TEXT);
-
-    v.selection.bg_fill = GREEN;
-    v.selection.stroke = Stroke::new(1.0_f32, WHITE);
-    v.popup_shadow.color = Color32::from_black_alpha(25);
-    v.window_shadow.color = Color32::from_black_alpha(35);
-    style.visuals = v;
-    ctx.set_style(style);
-}
 
 /// High-contrast 64x64 "VN" Emerald-Block icon for the window & taskbar
 fn make_icon() -> IconData {
@@ -3241,7 +3053,7 @@ mod tests {
             user_type: "legacy".into(),
             offline_skin: String::new(),
         };
-        let mut child = prepare_and_launch(&cfg, &vanilla_inst, &la, None, &status)
+        let mut child = prepare_and_launch(&cfg, &vanilla_inst, &la, None, &optimizer::HardwareInfo::default(), &status)
             .expect("Vanilla 1.21.11 should launch");
         let pid = child.id();
         println!("[TEST 4] Vanilla 1.21.11 spawned with PID {}", pid);
@@ -3269,7 +3081,7 @@ mod tests {
         // 6. Launch Fabric 1.21.11 (0 forced mods, deduplicated classpath, read logs) + stop game
         let fabric_inst = InstanceConfig::new("Test Fabric 1.21.11", "1.21.11", ModLoader::Fabric);
         let fabric_game_dir = cfg.instance_game_dir(&fabric_inst.id);
-        let mut fchild = prepare_and_launch(&cfg, &fabric_inst, &la, None, &status)
+        let mut fchild = prepare_and_launch(&cfg, &fabric_inst, &la, None, &optimizer::HardwareInfo::default(), &status)
             .expect("Fabric 1.21.11 should launch");
         let fpid = fchild.id();
         println!("[TEST 5] Fabric 1.21.11 spawned with PID {}", fpid);
