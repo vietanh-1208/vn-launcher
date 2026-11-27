@@ -345,6 +345,9 @@ fn build_coff_rsrc_object(dibs: &[Vec<u8>], grp: &[u8]) -> Vec<u8> {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
     let sizes = [256u32, 64, 48, 32, 16];
     let dibs: Vec<Vec<u8>> = sizes.iter().map(|&s| render_dib(s)).collect();
     let ico = build_ico_file(&sizes, &dibs);
